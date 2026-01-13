@@ -1,20 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  Plus, Trash2, Users, Calendar, CheckCircle, XCircle, 
-  ChevronDown, Copy, UtensilsCrossed, 
-  PieChart, RotateCcw, RotateCw, Filter, Edit3, Database, Search, X, 
-  LayoutList, History, ArrowRight, BookOpen, FileText, ChevronRight
+  Plus, Trash2, Users, DollarSign, Calendar, CheckCircle, XCircle, 
+  ChevronDown, ChevronUp, Copy, Save, UtensilsCrossed, 
+  PieChart, RotateCcw, RotateCw, Filter, Clock, Edit3, Database, Search, X, 
+  RefreshCcw, LayoutList, TrendingUp, History, ArrowRight, HelpCircle, FileText, ChevronRight, AlertCircle, BookOpen, User, Menu
 } from 'lucide-react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie
 } from 'recharts';
 
-// --- Firebase Imports ---
-import { db } from './firebase'; 
-import { 
-  collection, addDoc, updateDoc, deleteDoc, doc, 
-  onSnapshot, query, orderBy, setDoc, getDocs, where, writeBatch 
-} from 'firebase/firestore';
+// --- FIREBASE IMPORTS ---
+import { db } from './firebase'; // Đảm bảo file firebase.ts đã export { db }
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 // --- Theme & Style ---
 const THEME_COLOR = '#000066'; // Navy Blue
@@ -44,8 +41,16 @@ interface AppState {
 
 // --- Actions ---
 type Action = 
-  | { type: 'SYNC_FROM_FIREBASE'; payload: AppState }
-  | { type: 'LOCAL_UPDATE'; payload: AppState } // Dùng cho undo/redo local
+  | { type: 'SET_STATE'; payload: AppState }
+  | { type: 'ADD_PERSON'; payload: string }
+  | { type: 'REMOVE_PERSON'; payload: string }
+  | { type: 'ADD_RECORD'; payload: MealRecord }
+  | { type: 'UPDATE_RECORD'; payload: MealRecord }
+  | { type: 'DELETE_RECORD'; payload: string }
+  | { type: 'TOGGLE_PAID'; payload: { recordId: string, personName: string } }
+  | { type: 'MARK_ALL_PAID'; payload: { personName: string } }
+  | { type: 'LOAD_SAMPLE_DATA'; payload: 'full' | 'people_only' }
+  | { type: 'CLEAR_DATA'; };
 
 // --- Helper Functions ---
 const formatCurrency = (amount: number) => {
@@ -84,7 +89,6 @@ const copyToClipboard = (text: string) => {
   if (navigator.clipboard && window.isSecureContext) {
     return navigator.clipboard.writeText(text);
   } else {
-    // Fallback cho trình duyệt cũ
     const textArea = document.createElement("textarea");
     textArea.value = text;
     textArea.style.position = "fixed";
@@ -93,12 +97,17 @@ const copyToClipboard = (text: string) => {
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
-    try {
-        document.execCommand('copy');
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const successful = document.execCommand('copy');
         document.body.removeChild(textArea);
-    } catch (err) {
+        if (successful) resolve();
+        else reject(new Error('Copy command failed'));
+      } catch (err) {
         document.body.removeChild(textArea);
-    }
+        reject(err);
+      }
+    });
   }
 };
 
@@ -127,6 +136,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+// --- RESTORED FULL GUIDE MODAL ---
 const GuideModal = ({ onClose }: { onClose: () => void }) => (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in">
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col">
@@ -139,14 +149,36 @@ const GuideModal = ({ onClose }: { onClose: () => void }) => (
             <div className="p-6 overflow-y-auto space-y-6 text-gray-700 leading-relaxed">
                 <section>
                     <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">1. Quy trình cơ bản</h4>
-                    <p className="mb-2">Ứng dụng tự động lưu dữ liệu lên Cloud (Firebase). Bạn không cần bấm nút Save thủ công.</p>
+                    <p className="mb-2">Ứng dụng hoạt động theo quy tắc: <b>Một người trả tiền trước, sau đó chia đều cho những người cùng ăn.</b></p>
+                    <ul className="list-disc pl-5 space-y-1 text-sm">
+                        <li><b>Bước 1:</b> Vào tab <b>Thành Viên</b> để nhập tên mọi người trong nhóm (Chỉ cần làm 1 lần).</li>
+                        <li><b>Bước 2:</b> Khi đi ăn, vào tab <b>Nhập Liệu</b>. Chọn ngày, món ăn, tổng tiền. Quan trọng nhất là chọn đúng <b>Người trả tiền</b> (Chủ nợ) và tick chọn những <b>Người ăn</b> (bao gồm cả người trả nếu họ cũng ăn).</li>
+                        <li><b>Bước 3:</b> Bấm <b>Lưu</b>. Hệ thống tự động chia tiền và ghi nợ.</li>
+                    </ul>
                 </section>
                  <section>
                     <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">2. Theo dõi & Thanh toán nợ</h4>
                     <ul className="list-disc pl-5 space-y-1 text-sm">
-                        <li><b>Cột Cần Thu Về (Màu Xanh):</b> Dành cho người đã ứng tiền.</li>
-                        <li><b>Cột Cần Phải Trả (Màu Đỏ):</b> Dành cho người ăn ké.</li>
-                        <li><b>Cách trả nợ:</b> Tick vào ô vuông <input type="checkbox" className="align-middle" /> bên cạnh món ăn. Dữ liệu sẽ cập nhật ngay lập tức.</li>
+                        <li><b>Cột Cần Thu Về (Màu Xanh):</b> Dành cho người đã ứng tiền. Bấm vào tên để xem chi tiết.</li>
+                        <li><b>Cột Cần Phải Trả (Màu Đỏ):</b> Dành cho người ăn ké. Bấm vào tên để xem mình đang nợ những khoản nào.</li>
+                        <li><b>Cách trả nợ:</b> Tick vào ô vuông <input type="checkbox" className="align-middle" /> bên cạnh món ăn. Khoản đó sẽ chuyển xuống mục <b>"Lịch sử đã trả"</b>.</li>
+                    </ul>
+                </section>
+                 <section>
+                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">3. Chỉnh sửa & Cập nhật ngày trả</h4>
+                    <p className="mb-2 text-sm">Khi bấm nút <b>Sửa</b> (biểu tượng bút chì) ở Nhật ký giao dịch:</p>
+                    <ul className="list-disc pl-5 space-y-1 text-sm">
+                        <li>Bạn có thể tick chọn <b>"Đã trả"</b> cho từng người.</li>
+                        <li>Khi tick chọn, một ô chọn <b>Ngày giờ</b> sẽ hiện ra bên dưới. Bạn có thể bấm vào đó để sửa lại ngày trả nợ.</li>
+                    </ul>
+                </section>
+                <section>
+                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">4. Lưu trữ dữ liệu</h4>
+                    <p className="mb-2 text-sm">Hệ thống hiện đã hỗ trợ đồng bộ đám mây (Cloud):</p>
+                     <ul className="list-disc pl-5 space-y-1 text-sm">
+                        <li>Dữ liệu sẽ tự động lưu sau mỗi thao tác (Thêm, sửa, xóa).</li>
+                        <li>Bạn có thể truy cập link web này trên điện thoại hoặc máy tính khác để xem dữ liệu mới nhất.</li>
+                        <li>Nút <b>Undo/Redo</b> ở góc dưới màn hình giúp bạn quay lại thao tác nếu lỡ tay bấm nhầm.</li>
                     </ul>
                 </section>
             </div>
@@ -345,11 +377,14 @@ const App = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const currentState = history[historyIndex] || { people: [], records: [] };
   const { people, records } = currentState;
+  
+  // Flag to block infinite loop when loading from Cloud
+  const isRemoteUpdate = useRef(false);
 
   // --- UI State ---
   const [activeTab, setActiveTab] = useState<'entry' | 'debt_history' | 'report' | 'people'>('entry');
   const [showGuide, setShowGuide] = useState(false);
-   
+  
   // Edit Modal State
   const [editingRecord, setEditingRecord] = useState<MealRecord | null>(null);
 
@@ -368,129 +403,188 @@ const App = () => {
   const [showSampleOptions, setShowSampleOptions] = useState(false);
   const [expandedReportRows, setExpandedReportRows] = useState<Record<string, boolean>>({});
 
-  // --- FIREBASE SYNC & INITIALIZATION ---
-  // Thay thế việc load từ LocalStorage bằng lắng nghe Firestore Realtime
+  // --- Initialization & Firebase Sync ---
+  
+  // 1. Load Data from Firebase on Mount
   useEffect(() => {
-    // 1. Listen to 'people' collection
-    const qPeople = query(collection(db, 'people'), orderBy('name'));
-    const unsubscribePeople = onSnapshot(qPeople, (snapshot) => {
-        const peopleList = snapshot.docs.map(doc => doc.data().name as string);
-        dispatch({ type: 'SYNC_FROM_FIREBASE', payload: { people: peopleList, records: currentState.records } });
+    // Sử dụng doc ID cố định là 'main_data' trong collection 'lunch_app'
+    // Bạn có thể đổi 'main_data' thành ID khác nếu muốn nhiều nhóm khác nhau
+    const docRef = doc(db, 'lunch_app', 'main_data');
+
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as AppState;
+        // Kiểm tra xem dữ liệu có thực sự khác không để tránh render thừa
+        // Ở đây ta đơn giản là cập nhật và đánh dấu cờ
+        if (JSON.stringify(data) !== JSON.stringify(currentState)) {
+            isRemoteUpdate.current = true;
+            setHistory([data]);
+            setHistoryIndex(0);
+        }
+      } else {
+        // Nếu chưa có dữ liệu trên Cloud, thử lấy từ LocalStorage (cho lần đầu)
+        const savedPeople = localStorage.getItem('lunch_people_v13');
+        const savedRecords = localStorage.getItem('lunch_records_v13');
+        if (savedPeople || savedRecords) {
+            const initialState: AppState = {
+                people: savedPeople ? JSON.parse(savedPeople) : [],
+                records: savedRecords ? JSON.parse(savedRecords) : []
+            };
+            setHistory([initialState]);
+            setHistoryIndex(0);
+        } else {
+            setHistory([{ people: [], records: [] }]);
+            setHistoryIndex(0);
+        }
+      }
     });
 
-    // 2. Listen to 'records' collection
-    const qRecords = query(collection(db, 'records'), orderBy('createdAt', 'desc'));
-    const unsubscribeRecords = onSnapshot(qRecords, (snapshot) => {
-        const recordsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MealRecord));
-        // Lấy state hiện tại (people) để merge
-        // Lưu ý: Do closure, biến 'people' ở đây có thể cũ, nhưng reducer sẽ xử lý merge
-        // Cách tốt hơn là dispatch payload chứa records mới
-        dispatch({ type: 'SYNC_FROM_FIREBASE', payload: { people: [], records: recordsList } }); 
-    });
+    return () => unsubscribe();
+  }, []); // Chỉ chạy 1 lần khi mount
 
-    return () => {
-        unsubscribePeople();
-        unsubscribeRecords();
-    };
-  }, []); // Empty dependency array -> Run once on mount
+  // 2. Save Data to Firebase & LocalStorage on Change
+  useEffect(() => {
+    if (history.length > 0 && historyIndex >= 0) {
+      const current = history[historyIndex];
+      
+      // Save Local
+      localStorage.setItem('lunch_people_v13', JSON.stringify(current.people));
+      localStorage.setItem('lunch_records_v13', JSON.stringify(current.records));
 
-  // --- Dispatcher (Modified for Firebase) ---
+      // Save Cloud (Only if change didn't come from Cloud)
+      if (!isRemoteUpdate.current) {
+          const docRef = doc(db, 'lunch_app', 'main_data');
+          // setDoc với merge:true để an toàn, hoặc overwrite luôn
+          setDoc(docRef, { people: current.people, records: current.records })
+            .catch(err => console.error("Lỗi lưu Firebase:", err));
+      } else {
+          // Reset flag sau khi đã cập nhật state từ cloud
+          isRemoteUpdate.current = false;
+      }
+    }
+  }, [history, historyIndex]);
+
+  // --- Dispatcher ---
   const dispatch = useCallback((action: Action) => {
     setHistory(prevHistory => {
-      const current = prevHistory[prevHistory.length - 1] || { people: [], records: [] };
+      const current = prevHistory[historyIndex];
       let newState: AppState = { ...current };
 
       switch (action.type) {
-        case 'SYNC_FROM_FIREBASE':
-            // Merge logic: Nếu payload có mảng rỗng thì giữ nguyên cái cũ
-            newState = {
-                people: action.payload.people.length > 0 ? action.payload.people : current.people,
-                records: action.payload.records.length > 0 ? action.payload.records : current.records
+        case 'ADD_PERSON':
+          newState.people = [...current.people, action.payload];
+          break;
+        case 'REMOVE_PERSON':
+          newState.people = current.people.filter(p => p !== action.payload);
+          break;
+        case 'ADD_RECORD':
+          newState.records = [action.payload, ...current.records];
+          break;
+        case 'UPDATE_RECORD':
+          newState.records = current.records.map(r => 
+            r.id === action.payload.id ? action.payload : r
+          );
+          break;
+        case 'DELETE_RECORD':
+          newState.records = current.records.filter(r => r.id !== action.payload);
+          break;
+        case 'TOGGLE_PAID':
+          newState.records = current.records.map(r => {
+            if (r.id !== action.payload.recordId) return r;
+            return {
+              ...r,
+              participants: r.participants.map(p => {
+                if (p.name !== action.payload.personName) return p;
+                const newPaidStatus = !p.paid;
+                return { 
+                  ...p, 
+                  paid: newPaidStatus,
+                  paidAt: newPaidStatus ? new Date().toISOString() : null
+                };
+              })
             };
-            
-            // Xử lý edge case: Nếu Firebase trả về rỗng thật sự (đã xóa hết)
-            if (action.payload.records.length === 0 && current.records.length > 0) {
-                 // Cần check xem có phải lần load đầu tiên không, tạm thời để logic merge đơn giản
-                 // Ở đây giả định payload rỗng nghĩa là "không cập nhật phần này" 
-                 // (do logic tách listener ở trên)
-            }
-            // Logic fix cho listener tách biệt:
-            // Listener Records gọi: payload = {people: [], records: [...]}
-            // Listener People gọi: payload = {people: [...], records: []} 
-            // -> Cần check kỹ hơn
-            if (action.payload.people.length === 0 && action.payload.records.length > 0) {
-                newState.people = current.people;
-                newState.records = action.payload.records;
-            } else if (action.payload.people.length > 0 && action.payload.records.length === 0) {
-                 newState.people = action.payload.people;
-                 newState.records = current.records;
-            } else {
-                 newState = action.payload; // Full load
-            }
+          });
+          break;
+        case 'MARK_ALL_PAID':
+          newState.records = current.records.map(r => ({
+            ...r,
+            participants: r.participants.map(p => {
+              if (p.name === action.payload.personName && !p.paid && r.payer !== p.name) {
+                return { ...p, paid: true, paidAt: new Date().toISOString() };
+              }
+              return p;
+            })
+          }));
+          break;
+        case 'LOAD_SAMPLE_DATA':
+          newState.people = ["Khánh", "Minh Anh", "Hiếu", "Chị Trang"];
+          if (action.payload === 'full') {
+            const now = new Date();
+            const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+            newState.records = [
+                {
+                    id: generateId(),
+                    date: now.toISOString().slice(0, 10),
+                    createdAt: Date.now(),
+                    title: "Cafe sáng (Team họp)",
+                    totalAmount: 180000,
+                    perPersonAmount: 45000,
+                    payer: "Khánh",
+                    participants: [
+                        { name: "Khánh", paid: true, paidAt: now.toISOString() },
+                        { name: "Minh Anh", paid: false },
+                        { name: "Hiếu", paid: false },
+                        { name: "Chị Trang", paid: false }
+                    ]
+                },
+                {
+                    id: generateId(),
+                    date: yesterday.toISOString().slice(0, 10),
+                    createdAt: Date.now() - 10000,
+                    title: "Cơm tấm sườn bì",
+                    totalAmount: 220000,
+                    perPersonAmount: 55000,
+                    payer: "Chị Trang",
+                    participants: [
+                        { name: "Khánh", paid: true, paidAt: now.toISOString() },
+                        { name: "Minh Anh", paid: false },
+                        { name: "Hiếu", paid: false },
+                        { name: "Chị Trang", paid: true, paidAt: yesterday.toISOString() }
+                    ]
+                }
+            ];
+          }
+          break;
+        case 'CLEAR_DATA':
+            newState = { people: [], records: [] };
             break;
-            
-        case 'LOCAL_UPDATE':
-             // Cái này dùng để cập nhật optimistic UI nếu cần, 
-             // nhưng với onSnapshot nhanh thì có thể không cần thiết.
-             newState = action.payload;
-             break;
-             
+        case 'SET_STATE': // Action đặc biệt để sync từ Cloud
+            newState = action.payload;
+            break;
         default:
           return prevHistory;
       }
 
-      // Logic Undo/Redo với Firebase rất phức tạp vì server đè local.
-      // Giải pháp: Mỗi lần Sync từ Firebase coi như là "New State" chuẩn nhất.
-      // Ta chỉ đẩy vào history nếu nó thực sự khác biệt.
-      // Để đơn giản cho prompt này: Chỉ lưu history những thay đổi lớn, 
-      // hoặc chấp nhận history chỉ hoạt động local session.
-      
-      const newHistory = [...prevHistory, newState];
-      // Giới hạn history size để đỡ tốn mem
-      if (newHistory.length > 50) newHistory.shift();
-      
+      const newHistory = prevHistory.slice(0, historyIndex + 1);
+      newHistory.push(newState);
       setHistoryIndex(newHistory.length - 1);
       return newHistory;
     });
-  }, []);
+  }, [historyIndex]);
 
-  // --- Handlers (UPDATED TO WRITE TO FIREBASE) ---
-  
-  const handleUndo = () => {
-      if (historyIndex > 0) setHistoryIndex(historyIndex - 1);
-      alert("Lưu ý: Undo chỉ có tác dụng xem lại cục bộ. Dữ liệu trên Cloud không bị đảo ngược.");
-  };
-  
+  // --- Handlers ---
+  const handleUndo = () => historyIndex > 0 && setHistoryIndex(historyIndex - 1);
   const handleRedo = () => historyIndex < history.length - 1 && setHistoryIndex(historyIndex + 1);
 
-  const handleAddPerson = async (name: string) => {
+  const handleAddPerson = (name: string) => {
     const trimmedName = name.trim();
     if (trimmedName && !people.includes(trimmedName)) {
-      try {
-          await addDoc(collection(db, 'people'), { name: trimmedName });
-          setNewPersonName('');
-          // Không cần dispatch, onSnapshot sẽ tự cập nhật
-      } catch (e) {
-          alert('Lỗi thêm người: ' + e);
-      }
+      dispatch({ type: 'ADD_PERSON', payload: trimmedName });
+      setNewPersonName('');
     }
   };
-  
-  const handleRemovePerson = async (name: string) => {
-      if(!confirm(`Xóa thành viên ${name}?`)) return;
-      try {
-          // Tìm doc có name trùng khớp để xóa
-          const q = query(collection(db, 'people'), where('name', '==', name));
-          const snapshot = await getDocs(q);
-          snapshot.forEach(doc => {
-              deleteDoc(doc.ref);
-          });
-      } catch(e) {
-          alert('Lỗi xóa: ' + e);
-      }
-  }
 
-  const handleSaveRecord = async (record: any, isEdit: boolean) => {
+  const handleSaveRecord = (record: any, isEdit: boolean) => {
      if (!record.title) return alert('Thiếu nội dung chi!');
      if (!record.totalAmount || record.totalAmount <= 0) return alert('Số tiền không hợp lệ!');
      if (!record.payer) return alert('Chưa chọn người chi!');
@@ -498,16 +592,18 @@ const App = () => {
 
      const perPerson = Math.ceil(record.totalAmount / record.participants.length);
      
+     // Correctly map participant status from form data
      const fullParticipants: ParticipantStatus[] = record.participants.map((p: any) => {
         const isPayer = p.name === record.payer;
         return {
            name: p.name,
-           paid: isPayer ? true : p.paid, 
+           paid: isPayer ? true : p.paid, // Payer is always considered paid
            paidAt: isPayer ? (p.paidAt || new Date().toISOString()) : (p.paid ? (p.paidAt || new Date().toISOString()) : null)
         };
      });
 
-     const finalRecord = {
+     const finalRecord: MealRecord = {
+         id: isEdit && editingRecord ? editingRecord.id : generateId(),
          createdAt: isEdit && editingRecord ? editingRecord.createdAt : Date.now(),
          date: record.date || new Date().toISOString().slice(0, 10),
          title: record.title || '',
@@ -517,91 +613,14 @@ const App = () => {
          participants: fullParticipants
      };
 
-     try {
-         if (isEdit && editingRecord) {
-             await updateDoc(doc(db, 'records', editingRecord.id), finalRecord);
-             setEditingRecord(null);
-         } else {
-             await addDoc(collection(db, 'records'), finalRecord);
-         }
-         // alert('Đã lưu thành công!'); 
-     } catch (e) {
-         console.error(e);
-         alert('Lỗi khi lưu dữ liệu lên Cloud!');
+     if (isEdit) {
+         dispatch({ type: 'UPDATE_RECORD', payload: finalRecord });
+         setEditingRecord(null);
+     } else {
+         dispatch({ type: 'ADD_RECORD', payload: finalRecord });
+         // Alert or toast could go here
      }
   };
-
-  const handleTogglePaid = async (recordId: string, personName: string, currentParticipants: ParticipantStatus[]) => {
-      const updatedParticipants = currentParticipants.map(p => {
-          if (p.name !== personName) return p;
-          const newPaid = !p.paid;
-          return { ...p, paid: newPaid, paidAt: newPaid ? new Date().toISOString() : null };
-      });
-      
-      try {
-          await updateDoc(doc(db, 'records', recordId), { participants: updatedParticipants });
-      } catch (e) { console.error(e); }
-  };
-  
-  const handleMarkAllPaid = async (personName: string) => {
-      // Tìm tất cả record mà người này chưa trả
-      const unpaidRecords = records.filter(r => {
-          const p = r.participants.find(part => part.name === personName);
-          return p && !p.paid && r.payer !== personName;
-      });
-      
-      if (unpaidRecords.length === 0) return;
-      if (!confirm(`Xác nhận trả hết ${unpaidRecords.length} khoản nợ cho ${personName}?`)) return;
-      
-      const batch = writeBatch(db);
-      unpaidRecords.forEach(r => {
-          const updatedParticipants = r.participants.map(p => {
-              if (p.name === personName) return { ...p, paid: true, paidAt: new Date().toISOString() };
-              return p;
-          });
-          const ref = doc(db, 'records', r.id);
-          batch.update(ref, { participants: updatedParticipants });
-      });
-      
-      try {
-          await batch.commit();
-      } catch(e) { alert('Lỗi batch update: ' + e); }
-  }
-
-  const handleDeleteRecord = async (recordId: string) => {
-      if(confirm('Xóa giao dịch này vĩnh viễn?')) {
-          try {
-              await deleteDoc(doc(db, 'records', recordId));
-          } catch(e) { alert('Lỗi xóa: ' + e); }
-      }
-  }
-
-  const handleLoadSampleData = async () => {
-      // Vì dùng Firebase thật, nên ta sẽ insert thật
-      if(!confirm("Hành động này sẽ ghi dữ liệu mẫu lên Cloud thật. Tiếp tục?")) return;
-      
-      const samplePeople = ["Khánh", "Minh Anh", "Hiếu", "Chị Trang"];
-      for (const p of samplePeople) {
-          if (!people.includes(p)) await addDoc(collection(db, 'people'), { name: p });
-      }
-      // Add record logic here if needed...
-      setShowSampleOptions(false);
-  }
-
-  const handleClearData = async () => {
-      if(!confirm("CẢNH BÁO: Xóa toàn bộ dữ liệu trên Cloud? Hành động này không thể hoàn tác!")) return;
-      // Xóa records
-      const qRec = query(collection(db, 'records'));
-      const snapRec = await getDocs(qRec);
-      snapRec.forEach(d => deleteDoc(d.ref));
-      
-      // Xóa people
-      const qPeo = query(collection(db, 'people'));
-      const snapPeo = await getDocs(qPeo);
-      snapPeo.forEach(d => deleteDoc(d.ref));
-      
-      setShowSampleOptions(false);
-  }
 
   const toggleReportRow = (name: string) => {
       setExpandedReportRows(prev => ({ ...prev, [name]: !prev[name] }));
@@ -698,9 +717,9 @@ const App = () => {
             </div>
             <div>
                 <h1 className="text-lg font-bold uppercase tracking-wide leading-tight flex items-center gap-1">
-                    Sổ Ăn Uống <span className="text-yellow-400 text-xs bg-white/20 px-1.5 py-0.5 rounded ml-1 hidden sm:inline-block">Cloud Sync</span>
+                    Sổ Ăn Uống <span className="text-yellow-400 text-xs bg-white/20 px-1.5 py-0.5 rounded ml-1 hidden sm:inline-block">Pro</span>
                 </h1>
-                <span className="text-xs text-blue-200 opacity-80 font-medium hidden sm:block">Dữ liệu được lưu trên Cloud</span>
+                <span className="text-xs text-blue-200 opacity-80 font-medium hidden sm:block">Quản lý tài chính văn phòng</span>
             </div>
           </div>
           <button 
@@ -751,7 +770,7 @@ const App = () => {
                  initialData={{}}
                  people={people}
                  onSubmit={(data: any) => handleSaveRecord(data, false)}
-                 submitLabel="LƯU GIAO DỊCH (CLOUD)"
+                 submitLabel="LƯU GIAO DỊCH"
               />
             </AnimatedCard>
           </div>
@@ -761,23 +780,23 @@ const App = () => {
         {activeTab === 'debt_history' && (
           <div className="space-y-6 animate-enter">
               
-              {/* Unified Filter */}
-              <AnimatedCard className="p-4 flex flex-col md:flex-row gap-4 border-l-4 border-blue-500 items-center sticky top-[130px] z-10 shadow-md">
-                 <div className="flex flex-col sm:flex-row gap-2 items-center flex-1 w-full">
-                     <div className="flex items-center gap-2 w-full sm:w-auto mb-1 sm:mb-0">
-                         <Filter className="w-4 h-4 text-gray-500"/>
-                         <span className="text-xs font-bold text-gray-500 uppercase whitespace-nowrap">Lọc từ:</span>
-                     </div>
-                     <div className="flex items-center gap-2 w-full">
-                         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border border-gray-300 p-2 rounded text-sm outline-none flex-1 w-full"/>
-                         <ArrowRight className="w-4 h-4 text-gray-400 shrink-0"/>
-                         <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="border border-gray-300 p-2 rounded text-sm outline-none flex-1 w-full"/>
-                     </div>
-                 </div>
-              </AnimatedCard>
+             {/* Unified Filter */}
+             <AnimatedCard className="p-4 flex flex-col md:flex-row gap-4 border-l-4 border-blue-500 items-center sticky top-[130px] z-10 shadow-md">
+                <div className="flex flex-col sm:flex-row gap-2 items-center flex-1 w-full">
+                    <div className="flex items-center gap-2 w-full sm:w-auto mb-1 sm:mb-0">
+                        <Filter className="w-4 h-4 text-gray-500"/>
+                        <span className="text-xs font-bold text-gray-500 uppercase whitespace-nowrap">Lọc từ:</span>
+                    </div>
+                    <div className="flex items-center gap-2 w-full">
+                        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border border-gray-300 p-2 rounded text-sm outline-none flex-1 w-full"/>
+                        <ArrowRight className="w-4 h-4 text-gray-400 shrink-0"/>
+                        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="border border-gray-300 p-2 rounded text-sm outline-none flex-1 w-full"/>
+                    </div>
+                </div>
+             </AnimatedCard>
 
-              {/* SECTION 1: NET BALANCES */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+             {/* SECTION 1: NET BALANCES */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
                 {/* CREDITORS */}
                 <AnimatedCard className="overflow-hidden border-green-100">
                     <div className="bg-green-50/80 p-4 border-b border-green-100 flex items-center justify-between backdrop-blur-sm">
@@ -800,24 +819,24 @@ const App = () => {
                                 {expandedCreditor === item.name && (
                                     <div className="mt-3 pt-3 border-t border-green-100 text-sm space-y-2 animate-enter">
                                             {filteredRecords.map(r => {
-                                               if (r.payer === item.name) {
-                                                  const unpaid = r.participants.filter(p => !p.paid && p.name !== item.name);
-                                                  if (unpaid.length > 0) {
-                                                      return (
-                                                          <div key={r.id} className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded px-1">
-                                                               <div className="flex-1 pr-2">
-                                                                   <div className="font-medium text-gray-700">{r.title}</div>
-                                                                   <div className="text-[10px] text-gray-400">{formatShortDate(r.date)}</div>
-                                                                   <div className="text-[11px] text-red-500 font-medium mt-0.5">Chưa trả: {unpaid.map(p => p.name).join(', ')}</div>
-                                                               </div>
-                                                               <div className="font-medium text-green-600 text-right whitespace-nowrap">
-                                                                  <div>+{formatCurrency(r.perPersonAmount * unpaid.length)}</div>
-                                                               </div>
-                                                          </div>
-                                                      )
-                                                  }
-                                               }
-                                               return null;
+                                                if (r.payer === item.name) {
+                                                     const unpaid = r.participants.filter(p => !p.paid && p.name !== item.name);
+                                                     if (unpaid.length > 0) {
+                                                         return (
+                                                             <div key={r.id} className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded px-1">
+                                                                  <div className="flex-1 pr-2">
+                                                                      <div className="font-medium text-gray-700">{r.title}</div>
+                                                                      <div className="text-[10px] text-gray-400">{formatShortDate(r.date)}</div>
+                                                                      <div className="text-[11px] text-red-500 font-medium mt-0.5">Chưa trả: {unpaid.map(p => p.name).join(', ')}</div>
+                                                                  </div>
+                                                                  <div className="font-medium text-green-600 text-right whitespace-nowrap">
+                                                                     <div>+{formatCurrency(r.perPersonAmount * unpaid.length)}</div>
+                                                                  </div>
+                                                             </div>
+                                                         )
+                                                     }
+                                                }
+                                                return null;
                                             })}
                                     </div>
                                 )}
@@ -851,7 +870,7 @@ const App = () => {
                                                 <div className="flex justify-between items-center mb-2 pb-2 border-b border-red-200">
                                                     <span className="text-[10px] font-bold text-red-800 uppercase">Chưa trả</span>
                                                     <button 
-                                                        onClick={() => handleMarkAllPaid(item.name)}
+                                                        onClick={() => dispatch({type: 'MARK_ALL_PAID', payload: {personName: item.name}})}
                                                         className="text-[10px] bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 uppercase font-bold"
                                                     >
                                                         Trả hết ngay
@@ -868,7 +887,7 @@ const App = () => {
                                                                 </div>
                                                                 <div className="flex items-center gap-3">
                                                                     <span className="font-bold text-red-600 whitespace-nowrap">{formatCurrency(r.perPersonAmount)}</span>
-                                                                    <input type="checkbox" className="w-5 h-5 accent-blue-600 cursor-pointer" onChange={() => handleTogglePaid(r.id, item.name, r.participants)}/>
+                                                                    <input type="checkbox" className="w-5 h-5 accent-blue-600 cursor-pointer" onChange={() => dispatch({type: 'TOGGLE_PAID', payload: {recordId: r.id, personName: item.name}})}/>
                                                                 </div>
                                                             </div>
                                                         )
@@ -891,7 +910,7 @@ const App = () => {
                                                                 </div>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-gray-500 text-xs line-through whitespace-nowrap">{formatCurrency(r.perPersonAmount)}</span>
-                                                                    <input type="checkbox" checked={true} className="w-4 h-4 accent-gray-400 cursor-pointer" onChange={() => handleTogglePaid(r.id, item.name, r.participants)}/>
+                                                                    <input type="checkbox" checked={true} className="w-4 h-4 accent-gray-400 cursor-pointer" onChange={() => dispatch({type: 'TOGGLE_PAID', payload: {recordId: r.id, personName: item.name}})}/>
                                                                 </div>
                                                             </div>
                                                         )
@@ -954,10 +973,10 @@ const App = () => {
                                              <div className="flex flex-wrap gap-2 mt-3 mb-4">
                                                  {record.participants.map(p => (
                                                      <div 
-                                                        key={p.name} 
-                                                        className={`px-2 py-1 rounded border text-xs flex items-center gap-1 transition-colors cursor-help
-                                                        ${p.paid ? 'bg-green-50 text-green-700 border-green-200 font-bold shadow-sm' : 'bg-gray-50 text-gray-500 border-gray-100'}`}
-                                                        title={p.paid && p.paidAt ? `Đã trả lúc: ${formatDateTime(p.paidAt)}` : 'Chưa trả'}
+                                                         key={p.name} 
+                                                         className={`px-2 py-1 rounded border text-xs flex items-center gap-1 transition-colors cursor-help
+                                                         ${p.paid ? 'bg-green-50 text-green-700 border-green-200 font-bold shadow-sm' : 'bg-gray-50 text-gray-500 border-gray-100'}`}
+                                                         title={p.paid && p.paidAt ? `Đã trả lúc: ${formatDateTime(p.paidAt)}` : 'Chưa trả'}
                                                      >
                                                          {p.name} 
                                                          {p.paid && <CheckCircle className="w-3 h-3"/>}
@@ -969,7 +988,7 @@ const App = () => {
                                                  <button onClick={() => setEditingRecord(record)} className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-xs font-bold bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded transition-colors">
                                                      <Edit3 className="w-3 h-3"/> Sửa
                                                  </button>
-                                                 <button onClick={() => handleDeleteRecord(record.id)} className="flex items-center gap-1 text-red-600 hover:text-red-800 text-xs font-bold bg-red-50 hover:bg-red-100 px-3 py-2 rounded transition-colors">
+                                                 <button onClick={() => { if(confirm('Xóa giao dịch này?')) dispatch({type: 'DELETE_RECORD', payload: record.id}) }} className="flex items-center gap-1 text-red-600 hover:text-red-800 text-xs font-bold bg-red-50 hover:bg-red-100 px-3 py-2 rounded transition-colors">
                                                      <Trash2 className="w-3 h-3"/> Xóa
                                                  </button>
                                              </div>
@@ -987,126 +1006,126 @@ const App = () => {
         {/* TAB 4: REPORT */}
         {activeTab === 'report' && (
           <div className="space-y-6 animate-enter">
-              <AnimatedCard className="p-4 flex flex-col md:flex-row items-end gap-4">
-                 <div className="w-full md:w-auto">
-                     <label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Từ ngày</label>
-                     <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/>
-                 </div>
-                 <div className="w-full md:w-auto">
-                     <label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Đến ngày</label>
-                     <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/>
-                 </div>
-                 <div className="w-full md:flex-1 text-right mt-2 md:mt-0">
-                     <div className="text-xs text-gray-500 uppercase font-bold mb-1">Tổng chi tiêu (Lọc)</div>
-                     <div className="text-2xl font-bold text-blue-800">{formatCurrency(totalFilteredSpent)}</div>
-                 </div>
-              </AnimatedCard>
+             <AnimatedCard className="p-4 flex flex-col md:flex-row items-end gap-4">
+                <div className="w-full md:w-auto">
+                    <label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Từ ngày</label>
+                    <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/>
+                </div>
+                <div className="w-full md:w-auto">
+                    <label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Đến ngày</label>
+                    <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/>
+                </div>
+                <div className="w-full md:flex-1 text-right mt-2 md:mt-0">
+                    <div className="text-xs text-gray-500 uppercase font-bold mb-1">Tổng chi tiêu (Lọc)</div>
+                    <div className="text-2xl font-bold text-blue-800">{formatCurrency(totalFilteredSpent)}</div>
+                </div>
+             </AnimatedCard>
 
-              {filteredRecords.length > 0 && (
-                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                     <AnimatedCard className="p-4 h-72">
-                         <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Tỷ trọng chi tiêu</h4>
-                         <ResponsiveContainer width="100%" height="90%">
-                             <RePieChart>
-                                 <Pie data={spendingByPerson} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5}>
-                                     {spendingByPerson.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
-                                 </Pie>
-                                 <RechartsTooltip content={<CustomTooltip />} />
-                                 <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{fontSize: '11px'}}/>
-                             </RePieChart>
-                         </ResponsiveContainer>
-                     </AnimatedCard>
-                     
-                     <AnimatedCard className="p-4 h-72">
-                         <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Biểu đồ Công nợ</h4>
-                         <ResponsiveContainer width="100%" height="90%">
-                             <BarChart data={debtSummaryData} margin={{top: 5, right: 5, left: -10, bottom: 0}}>
-                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0"/>
-                                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11}} dy={10} />
-                                 <YAxis tick={{fontSize: 11}} />
-                                 <RechartsTooltip content={<CustomTooltip />} cursor={{fill: 'rgba(0,0,0,0.02)'}} />
-                                 <Bar dataKey="net" radius={[4, 4, 4, 4]} barSize={30}>
-                                     {debtSummaryData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.net > 0 ? '#10b981' : '#ef4444'} />)}
-                                 </Bar>
-                             </BarChart>
-                         </ResponsiveContainer>
-                     </AnimatedCard>
-                 </div>
-              )}
+             {filteredRecords.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <AnimatedCard className="p-4 h-72">
+                        <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Tỷ trọng chi tiêu</h4>
+                        <ResponsiveContainer width="100%" height="90%">
+                            <RePieChart>
+                                <Pie data={spendingByPerson} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5}>
+                                    {spendingByPerson.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
+                                </Pie>
+                                <RechartsTooltip content={<CustomTooltip />} />
+                                <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{fontSize: '11px'}}/>
+                            </RePieChart>
+                        </ResponsiveContainer>
+                    </AnimatedCard>
+                    
+                    <AnimatedCard className="p-4 h-72">
+                        <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Biểu đồ Công nợ</h4>
+                        <ResponsiveContainer width="100%" height="90%">
+                            <BarChart data={debtSummaryData} margin={{top: 5, right: 5, left: -10, bottom: 0}}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0"/>
+                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11}} dy={10} />
+                                <YAxis tick={{fontSize: 11}} />
+                                <RechartsTooltip content={<CustomTooltip />} cursor={{fill: 'rgba(0,0,0,0.02)'}} />
+                                <Bar dataKey="net" radius={[4, 4, 4, 4]} barSize={30}>
+                                    {debtSummaryData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.net > 0 ? '#10b981' : '#ef4444'} />)}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </AnimatedCard>
+                </div>
+             )}
 
-              <AnimatedCard className="p-4 sm:p-6">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
-                     <h4 className="font-bold text-gray-700 uppercase flex items-center gap-2"><FileText className="w-4 h-4"/> Bảng Tổng Hợp</h4>
-                     <button onClick={() => {
-                         const lines = netBalances.map(nb => `${nb.name}: ${formatCurrency(nb.net)}`).join('\n');
-                         copyToClipboard(lines);
-                         alert('Đã copy!');
-                     }} className="text-xs flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded font-medium transition-colors w-full sm:w-auto justify-center">
-                         <Copy className="w-3 h-3"/> Copy nội dung
-                     </button>
-                  </div>
-                  <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left border-collapse min-w-[500px] sm:min-w-0">
-                          <thead className="bg-gray-50 text-gray-500 uppercase text-xs">
-                              <tr>
-                                  <th className="px-4 py-3 border-b w-[40%]">Thành viên</th>
-                                  <th className="px-4 py-3 border-b text-right">Dư nợ</th>
-                                  <th className="px-4 py-3 border-b text-right">Chi tiết</th>
-                              </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100">
-                              {netBalances.map(nb => (
-                                  <React.Fragment key={nb.name}>
-                                      <tr 
-                                         className="hover:bg-gray-50 cursor-pointer group"
-                                         onClick={() => toggleReportRow(nb.name)}
-                                      >
-                                          <td className="px-4 py-3 font-bold text-gray-800 flex items-center gap-2">
-                                              <div className={`p-1 rounded-full transition-transform duration-200 ${expandedReportRows[nb.name] ? 'rotate-90 bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
-                                                  <ChevronRight className="w-4 h-4"/>
-                                              </div>
-                                              {nb.name}
-                                          </td>
-                                          <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${nb.net > 0 ? 'text-green-600' : (nb.net < 0 ? 'text-red-600' : 'text-gray-400')}`}>
-                                              {nb.net > 0 ? '+' : ''}{formatCurrency(nb.net)}
-                                          </td>
-                                          <td className="px-4 py-3 text-right text-gray-400 text-xs">
-                                              {nb.meals.length} bữa ăn (Xem)
-                                          </td>
-                                      </tr>
-                                      {expandedReportRows[nb.name] && (
-                                          <tr className="bg-gray-50/50 animate-in fade-in">
-                                              <td colSpan={3} className="px-4 py-3 pl-4 sm:pl-12">
-                                                  <div className="text-[11px] uppercase font-bold text-gray-400 mb-2">Lịch sử tham gia:</div>
-                                                  {nb.meals.length > 0 ? (
-                                                      <div className="space-y-2">
-                                                          {nb.meals.map((m, idx) => (
-                                                              <div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-gray-100 text-xs shadow-sm">
-                                                                  <div className="flex gap-2 sm:gap-3 flex-1 overflow-hidden">
-                                                                      <span className="font-mono text-gray-500 whitespace-nowrap">{formatShortDate(m.date)}</span>
-                                                                      <span className="font-medium text-gray-700 truncate">{m.title}</span>
-                                                                  </div>
-                                                                  <div className="flex items-center gap-2 pl-2">
-                                                                      {m.isPaid ? 
-                                                                          <span className="text-green-600 flex items-center gap-1 font-bold bg-green-50 px-1.5 py-0.5 rounded whitespace-nowrap hidden sm:flex"><CheckCircle className="w-3 h-3"/> Đã trả</span> 
-                                                                          : 
-                                                                          <span className="text-gray-400 italic whitespace-nowrap hidden sm:inline">Chưa trả</span>
-                                                                      }
-                                                                      <span className="font-bold text-gray-800 w-[60px] text-right">{formatCurrency(m.amount)}</span>
-                                                                  </div>
-                                                              </div>
-                                                          ))}
-                                                      </div>
-                                                  ) : <div className="text-xs text-gray-400 italic">Chưa tham gia bữa nào trong khoảng thời gian này.</div>}
-                                              </td>
-                                          </tr>
-                                      )}
-                                  </React.Fragment>
-                              ))}
-                          </tbody>
-                      </table>
-                  </div>
-              </AnimatedCard>
+             <AnimatedCard className="p-4 sm:p-6">
+                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                    <h4 className="font-bold text-gray-700 uppercase flex items-center gap-2"><FileText className="w-4 h-4"/> Bảng Tổng Hợp</h4>
+                    <button onClick={() => {
+                        const lines = netBalances.map(nb => `${nb.name}: ${formatCurrency(nb.net)}`).join('\n');
+                        copyToClipboard(lines);
+                        alert('Đã copy!');
+                    }} className="text-xs flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded font-medium transition-colors w-full sm:w-auto justify-center">
+                        <Copy className="w-3 h-3"/> Copy nội dung
+                    </button>
+                 </div>
+                 <div className="overflow-x-auto">
+                     <table className="w-full text-sm text-left border-collapse min-w-[500px] sm:min-w-0">
+                         <thead className="bg-gray-50 text-gray-500 uppercase text-xs">
+                             <tr>
+                                 <th className="px-4 py-3 border-b w-[40%]">Thành viên</th>
+                                 <th className="px-4 py-3 border-b text-right">Dư nợ</th>
+                                 <th className="px-4 py-3 border-b text-right">Chi tiết</th>
+                             </tr>
+                         </thead>
+                         <tbody className="divide-y divide-gray-100">
+                             {netBalances.map(nb => (
+                                 <React.Fragment key={nb.name}>
+                                     <tr 
+                                        className="hover:bg-gray-50 cursor-pointer group"
+                                        onClick={() => toggleReportRow(nb.name)}
+                                     >
+                                         <td className="px-4 py-3 font-bold text-gray-800 flex items-center gap-2">
+                                             <div className={`p-1 rounded-full transition-transform duration-200 ${expandedReportRows[nb.name] ? 'rotate-90 bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
+                                                 <ChevronRight className="w-4 h-4"/>
+                                             </div>
+                                             {nb.name}
+                                         </td>
+                                         <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${nb.net > 0 ? 'text-green-600' : (nb.net < 0 ? 'text-red-600' : 'text-gray-400')}`}>
+                                             {nb.net > 0 ? '+' : ''}{formatCurrency(nb.net)}
+                                         </td>
+                                         <td className="px-4 py-3 text-right text-gray-400 text-xs">
+                                             {nb.meals.length} bữa ăn (Xem)
+                                         </td>
+                                     </tr>
+                                     {expandedReportRows[nb.name] && (
+                                         <tr className="bg-gray-50/50 animate-in fade-in">
+                                             <td colSpan={3} className="px-4 py-3 pl-4 sm:pl-12">
+                                                 <div className="text-[11px] uppercase font-bold text-gray-400 mb-2">Lịch sử tham gia:</div>
+                                                 {nb.meals.length > 0 ? (
+                                                     <div className="space-y-2">
+                                                         {nb.meals.map((m, idx) => (
+                                                             <div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-gray-100 text-xs shadow-sm">
+                                                                 <div className="flex gap-2 sm:gap-3 flex-1 overflow-hidden">
+                                                                     <span className="font-mono text-gray-500 whitespace-nowrap">{formatShortDate(m.date)}</span>
+                                                                     <span className="font-medium text-gray-700 truncate">{m.title}</span>
+                                                                 </div>
+                                                                 <div className="flex items-center gap-2 pl-2">
+                                                                     {m.isPaid ? 
+                                                                         <span className="text-green-600 flex items-center gap-1 font-bold bg-green-50 px-1.5 py-0.5 rounded whitespace-nowrap hidden sm:flex"><CheckCircle className="w-3 h-3"/> Đã trả</span> 
+                                                                         : 
+                                                                         <span className="text-gray-400 italic whitespace-nowrap hidden sm:inline">Chưa trả</span>
+                                                                     }
+                                                                     <span className="font-bold text-gray-800 w-[60px] text-right">{formatCurrency(m.amount)}</span>
+                                                                 </div>
+                                                             </div>
+                                                         ))}
+                                                     </div>
+                                                 ) : <div className="text-xs text-gray-400 italic">Chưa tham gia bữa nào trong khoảng thời gian này.</div>}
+                                             </td>
+                                         </tr>
+                                     )}
+                                 </React.Fragment>
+                             ))}
+                         </tbody>
+                     </table>
+                 </div>
+             </AnimatedCard>
 
           </div>
         )}
@@ -1114,72 +1133,75 @@ const App = () => {
         {/* TAB 5: PEOPLE */}
         {activeTab === 'people' && (
           <div className="animate-enter max-w-3xl mx-auto">
-              <AnimatedCard className="p-4 sm:p-6">
-                 <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-3">
-                     <h3 className="font-bold text-lg flex items-center gap-2" style={{ color: THEME_COLOR }}>
-                         <Users className="w-6 h-6" /> Danh Sách Thành Viên
-                     </h3>
-                     <div className="relative w-full sm:w-auto">
-                         <button 
-                             onClick={() => setShowSampleOptions(!showSampleOptions)}
-                             className="text-xs bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-4 py-2 rounded-lg flex items-center justify-center gap-1 font-bold transition-all shadow-sm hover:shadow w-full sm:w-auto"
-                         >
-                             <Database className="w-3 h-3" /> Dữ liệu mẫu
-                         </button>
-                         {showSampleOptions && (
-                             <div className="absolute right-0 mt-2 w-full sm:w-52 bg-white border rounded-xl shadow-2xl z-50 overflow-hidden animate-in zoom-in-95 duration-200">
-                                 <button onClick={handleLoadSampleData} className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b">
-                                     Nạp dữ liệu mẫu lên Cloud
-                                 </button>
-                                 <button onClick={handleClearData} className="w-full text-left px-4 py-3 text-sm hover:bg-red-50 text-red-600 font-medium">
-                                     <Trash2 className="w-3 h-3 inline mr-1"/> Xóa sạch Cloud DB
-                                 </button>
-                             </div>
-                         )}
-                     </div>
-                 </div>
-                 
-                 <div className="flex gap-2 mb-6">
-                     <input 
-                         type="text" 
-                         value={newPersonName}
-                         onChange={(e) => setNewPersonName(e.target.value)}
-                         placeholder="Nhập tên thành viên..." 
-                         className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none transition-all"
-                         onKeyDown={(e) => e.key === 'Enter' && handleAddPerson(newPersonName)}
-                     />
-                     <button 
-                         onClick={() => handleAddPerson(newPersonName)} 
-                         className="text-white px-5 rounded-lg font-bold hover:opacity-90 transition-all shadow-md active:scale-95"
-                         style={{ backgroundColor: THEME_COLOR }}
-                     >
-                         <Plus className="w-5 h-5" />
-                     </button>
-                 </div>
-                 
-                 {people.length === 0 ? (
-                     <div className="text-center text-gray-400 py-12 border-2 border-dashed border-gray-200 rounded-xl">
-                         <Users className="w-12 h-12 mx-auto mb-2 opacity-20"/>
-                         Chưa có thành viên nào.
-                     </div>
-                 ) : (
-                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                         {people.map((person, idx) => (
-                             <div key={person} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg hover:shadow-md transition-all group" style={{ animationDelay: `${idx * 0.05}s` }}>
-                                 <span className="font-medium flex items-center gap-3 text-gray-700">
-                                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 text-blue-800 flex items-center justify-center text-sm font-bold shadow-sm">
-                                         {person.charAt(0)}
-                                     </div>
-                                     {person}
-                                 </span>
-                                 <button onClick={() => handleRemovePerson(person)} className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-all opacity-0 group-hover:opacity-100">
-                                     <Trash2 className="w-4 h-4" />
-                                 </button>
-                             </div>
-                         ))}
-                     </div>
-                 )}
-              </AnimatedCard>
+             <AnimatedCard className="p-4 sm:p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-3">
+                    <h3 className="font-bold text-lg flex items-center gap-2" style={{ color: THEME_COLOR }}>
+                        <Users className="w-6 h-6" /> Danh Sách Thành Viên
+                    </h3>
+                    <div className="relative w-full sm:w-auto">
+                        <button 
+                            onClick={() => setShowSampleOptions(!showSampleOptions)}
+                            className="text-xs bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-4 py-2 rounded-lg flex items-center justify-center gap-1 font-bold transition-all shadow-sm hover:shadow w-full sm:w-auto"
+                        >
+                            <Database className="w-3 h-3" /> Dữ liệu mẫu
+                        </button>
+                        {showSampleOptions && (
+                            <div className="absolute right-0 mt-2 w-full sm:w-52 bg-white border rounded-xl shadow-2xl z-50 overflow-hidden animate-in zoom-in-95 duration-200">
+                                <button onClick={() => { dispatch({type: 'LOAD_SAMPLE_DATA', payload: 'people_only'}); setShowSampleOptions(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b">
+                                    Chỉ nạp tên thành viên
+                                </button>
+                                <button onClick={() => { dispatch({type: 'LOAD_SAMPLE_DATA', payload: 'full'}); setShowSampleOptions(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b">
+                                    Nạp dữ liệu test đầy đủ
+                                </button>
+                                <button onClick={() => { if(confirm('Xóa sạch mọi dữ liệu?')) { dispatch({type: 'CLEAR_DATA'}); setShowSampleOptions(false); }}} className="w-full text-left px-4 py-3 text-sm hover:bg-red-50 text-red-600 font-medium">
+                                    <Trash2 className="w-3 h-3 inline mr-1"/> Xóa sạch dữ liệu
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+                
+                <div className="flex gap-2 mb-6">
+                    <input 
+                        type="text" 
+                        value={newPersonName}
+                        onChange={(e) => setNewPersonName(e.target.value)}
+                        placeholder="Nhập tên thành viên..." 
+                        className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none transition-all"
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddPerson(newPersonName)}
+                    />
+                    <button 
+                        onClick={() => handleAddPerson(newPersonName)} 
+                        className="text-white px-5 rounded-lg font-bold hover:opacity-90 transition-all shadow-md active:scale-95"
+                        style={{ backgroundColor: THEME_COLOR }}
+                    >
+                        <Plus className="w-5 h-5" />
+                    </button>
+                </div>
+                
+                {people.length === 0 ? (
+                    <div className="text-center text-gray-400 py-12 border-2 border-dashed border-gray-200 rounded-xl">
+                        <Users className="w-12 h-12 mx-auto mb-2 opacity-20"/>
+                        Chưa có thành viên nào.
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {people.map((person, idx) => (
+                            <div key={person} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg hover:shadow-md transition-all group" style={{ animationDelay: `${idx * 0.05}s` }}>
+                                <span className="font-medium flex items-center gap-3 text-gray-700">
+                                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 text-blue-800 flex items-center justify-center text-sm font-bold shadow-sm">
+                                        {person.charAt(0)}
+                                    </div>
+                                    {person}
+                                </span>
+                                <button onClick={() => dispatch({type: 'REMOVE_PERSON', payload: person})} className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-all opacity-0 group-hover:opacity-100">
+                                    <Trash2 className="w-4 h-4" />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+             </AnimatedCard>
           </div>
         )}
 
