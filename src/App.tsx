@@ -3,8 +3,8 @@ import {
   Plus, Trash2, Users, Calendar, CheckCircle, XCircle, 
   ChevronDown, Copy, UtensilsCrossed, 
   PieChart, RotateCcw, RotateCw, Filter, Edit3, Database, X, 
-  History, ArrowRight, BookOpen, LogIn, LogOut, User, Key, Lock, 
-  LayoutList, ScrollText, Clock // <--- Đã thêm ScrollText, Clock
+  History, ArrowRight, BookOpen, LogIn, LogOut, Key, Lock, 
+  LayoutList, ScrollText, Clock, Bell // Added Bell for notifications
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie
@@ -45,7 +45,6 @@ interface MealRecord {
   participants: ParticipantStatus[];
 }
 
-// [NEW] Log Entry Type
 interface LogEntry {
   id: string;
   timestamp: number;
@@ -57,7 +56,7 @@ interface LogEntry {
 interface AppState {
   people: string[];
   records: MealRecord[];
-  logs: LogEntry[]; // [NEW] Added logs array
+  logs: LogEntry[];
 }
 
 // --- Actions ---
@@ -132,7 +131,6 @@ const copyToClipboard = (text: string) => {
   }
 };
 
-// --- AUTH ERROR MAPPING ---
 const mapAuthError = (code: string) => {
   switch (code) {
     case 'auth/email-already-in-use': return 'Email này đã được sử dụng.';
@@ -172,6 +170,22 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+// --- TOAST NOTIFICATION COMPONENT ---
+const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error', onClose: () => void }) => {
+    useEffect(() => {
+        const timer = setTimeout(onClose, 3000);
+        return () => clearTimeout(timer);
+    }, [onClose]);
+
+    return (
+        <div className={`fixed top-4 right-4 z-[100] px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-right fade-in duration-300 ${type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+            {type === 'success' ? <CheckCircle className="w-5 h-5"/> : <AlertCircle className="w-5 h-5"/>}
+            <span className="font-bold text-sm">{message}</span>
+            <button onClick={onClose} className="ml-2 opacity-80 hover:opacity-100"><X className="w-4 h-4"/></button>
+        </div>
+    );
+};
+
 const GuideModal = ({ onClose }: { onClose: () => void }) => (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in">
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col">
@@ -199,25 +213,9 @@ const GuideModal = ({ onClose }: { onClose: () => void }) => (
                         <li><b>Cách trả nợ:</b> Tick vào ô vuông <input type="checkbox" className="align-middle" /> bên cạnh món ăn. Khoản đó sẽ chuyển xuống mục <b>"Lịch sử đã trả"</b>.</li>
                     </ul>
                 </section>
-                 <section>
-                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">3. Chỉnh sửa & Cập nhật ngày trả</h4>
-                    <p className="mb-2 text-sm">Khi bấm nút <b>Sửa</b> (biểu tượng bút chì) ở Nhật ký giao dịch:</p>
-                    <ul className="list-disc pl-5 space-y-1 text-sm">
-                        <li>Bạn có thể tick chọn <b>"Đã trả"</b> cho từng người.</li>
-                        <li>Khi tick chọn, một ô chọn <b>Ngày giờ</b> sẽ hiện ra bên dưới. Bạn có thể bấm vào đó để sửa lại ngày trả nợ.</li>
-                    </ul>
-                </section>
                 <section>
-                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">4. Lưu trữ & Bảo mật</h4>
-                    <p className="mb-2 text-sm">Hệ thống đồng bộ đám mây (Cloud) theo thời gian thực:</p>
-                     <ul className="list-disc pl-5 space-y-1 text-sm">
-                        <li><b>Khách (Chưa đăng nhập):</b> Chỉ có thể xem dữ liệu, không thể sửa đổi.</li>
-                        <li><b>Thành viên (Đã đăng nhập):</b> Có toàn quyền thêm, sửa, xóa dữ liệu.</li>
-                    </ul>
-                </section>
-                <section>
-                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">5. Lịch sử chỉnh sửa</h4>
-                    <p className="mb-2 text-sm">Vào tab <b>Lịch Sử</b> để xem chi tiết ai đã thay đổi gì vào thời gian nào, giúp minh bạch tài chính.</p>
+                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">3. Log & Lịch sử</h4>
+                    <p className="mb-2 text-sm">Mọi thao tác thêm, sửa, xóa đều được ghi lại trong tab <b>Lịch Sử</b> để đảm bảo minh bạch.</p>
                 </section>
             </div>
             <div className="p-4 border-t bg-gray-50 text-right sticky bottom-0">
@@ -282,6 +280,7 @@ const AuthModal = ({ isOpen, onClose, user }: { isOpen: boolean, onClose: () => 
                 <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
                     <h3 className="font-bold text-lg text-gray-800">
                         {mode === 'login' && 'Đăng Nhập'}
+                        {mode === 'register' && 'Đăng Ký Tài Khoản'}
                         {mode === 'forgot' && 'Quên Mật Khẩu'}
                         {mode === 'changePass' && 'Đổi Mật Khẩu'}
                     </h3>
@@ -314,6 +313,7 @@ const AuthModal = ({ isOpen, onClose, user }: { isOpen: boolean, onClose: () => 
                     )}
 
                     <button disabled={loading} type="submit" className="w-full bg-blue-800 text-white py-3 rounded-lg font-bold hover:bg-blue-900 transition-all disabled:opacity-50">
+                        {loading ? 'Đang xử lý...' : (mode === 'login' ? 'Đăng Nhập' : mode === 'register' ? 'Đăng Ký' : mode === 'forgot' ? 'Gửi Email' : 'Cập Nhật')}
                     </button>
 
                     {!user && (
@@ -321,6 +321,7 @@ const AuthModal = ({ isOpen, onClose, user }: { isOpen: boolean, onClose: () => 
                             {mode === 'login' ? (
                                 <>
                                     <span className="text-gray-500 cursor-pointer hover:text-blue-600" onClick={() => setMode('forgot')}>Quên mật khẩu?</span>
+                                    <span className="text-blue-600 font-bold cursor-pointer hover:underline" onClick={() => setMode('register')}>Đăng ký mới</span>
                                 </>
                             ) : (
                                 <span className="text-blue-600 font-bold cursor-pointer hover:underline w-full text-center" onClick={() => setMode('login')}>Quay lại đăng nhập</span>
@@ -333,25 +334,37 @@ const AuthModal = ({ isOpen, onClose, user }: { isOpen: boolean, onClose: () => 
     );
 };
 
-// --- Refactored RecordForm (Updated with ReadOnly Mode) ---
-const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people, currentUser }: { 
+// --- Refactored RecordForm ---
+const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people, currentUser, resetKey }: { 
     initialData: any, 
     onSubmit: (data: any) => void, 
     onCancel?: () => void, 
     submitLabel: string,
     people: string[],
-    currentUser: FirebaseUser | null
+    currentUser: FirebaseUser | null,
+    resetKey?: number // Used to force reset state
 }) => {
     const [fDate, setFDate] = useState(initialData.date || new Date().toISOString().slice(0, 10));
     const [fTitle, setFTitle] = useState(initialData.title || '');
     const [fTotal, setFTotal] = useState(initialData.totalAmount?.toString() || '');
     const [fPayer, setFPayer] = useState(initialData.payer || '');
     const [fParticipants, setFParticipants] = useState<ParticipantStatus[]>(
-        initialData.participants || (initialData.participantNames || []).map((name: string) => ({ name, paid: false, paidAt: null }))
+        initialData.participants || []
     );
     const [fDropdownOpen, setFDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
-    const isReadOnly = !currentUser; // Read-only logic
+    const isReadOnly = !currentUser;
+
+    // Reset Form when resetKey changes (Success save)
+    useEffect(() => {
+        if (resetKey && resetKey > 0) {
+            setFDate(new Date().toISOString().slice(0, 10));
+            setFTitle('');
+            setFTotal('');
+            setFPayer('');
+            setFParticipants([]);
+        }
+    }, [resetKey]);
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -362,6 +375,14 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people, curr
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
+
+    // AUTO-ADD PAYER TO PARTICIPANTS
+    useEffect(() => {
+        if (fPayer && !fParticipants.some(p => p.name === fPayer)) {
+            // If payer selected, auto add them to participants list as paid
+            setFParticipants(prev => [...prev, { name: fPayer, paid: true, paidAt: new Date().toISOString() }]);
+        }
+    }, [fPayer]);
 
     const toggleParticipant = (name: string) => {
         if (isReadOnly) return;
@@ -463,7 +484,7 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people, curr
             <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
                 <label className="text-xs font-bold text-gray-500 uppercase block mb-2">Danh sách chia tiền ({fParticipants.length})</label>
                 {fParticipants.length === 0 ? (
-                    <div className="text-center text-gray-400 text-xs py-4 italic">Chưa chọn ai</div>
+                    <div className="text-center text-gray-400 text-xs py-4 italic">Chưa chọn ai (Vui lòng chọn người trả và người ăn)</div>
                 ) : (
                     <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                         {fParticipants.map(p => (
@@ -533,6 +554,8 @@ const App = () => {
   // --- UI State ---
   const [activeTab, setActiveTab] = useState<'entry' | 'debt_history' | 'report' | 'people' | 'logs'>('entry');
   const [showGuide, setShowGuide] = useState(false);
+  const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
+  const [formResetKey, setFormResetKey] = useState(0); // Key to trigger form reset
   
   // --- AUTH STATE ---
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
@@ -566,7 +589,6 @@ const App = () => {
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data() as AppState;
-        // Migration check: if logs doesn't exist, add it
         if (!data.logs) data.logs = [];
         
         if (JSON.stringify(data) !== JSON.stringify(currentState)) {
@@ -594,36 +616,36 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // 3. Save Data (Only if Logged In & Local Change)
+  // 3. Save Data
   useEffect(() => {
     if (history.length > 0 && historyIndex >= 0) {
       const current = history[historyIndex];
       localStorage.setItem('lunch_people_v13', JSON.stringify(current.people));
       localStorage.setItem('lunch_records_v13', JSON.stringify(current.records));
 
-      // Chỉ lưu lên cloud nếu người dùng đã đăng nhập và không phải là update từ cloud
       if (!isRemoteUpdate.current && currentUser) {
           const docRef = doc(db, 'lunch_app', 'main_data');
           setDoc(docRef, { people: current.people, records: current.records, logs: current.logs })
-            .catch(err => console.error("Lỗi lưu Firebase:", err));
+            .catch(err => {
+                console.error("Lỗi lưu Firebase:", err);
+                setToast({msg: "Lỗi lưu dữ liệu lên Cloud!", type: 'error'});
+            });
       } else {
           isRemoteUpdate.current = false;
       }
     }
   }, [history, historyIndex, currentUser]);
 
-  // --- Dispatcher with Logging ---
+  // --- Dispatcher ---
   const dispatch = useCallback((action: Action) => {
-    // PROTECT ACTIONS: Nếu chưa đăng nhập, không cho sửa
     if (!currentUser && action.type !== 'SET_STATE' && action.type !== 'LOAD_SAMPLE_DATA' && action.type !== 'CLEAR_DATA') {
-        alert("Vui lòng đăng nhập để thực hiện thao tác này!");
+        setToast({msg: "Vui lòng đăng nhập!", type: 'error'});
         return;
     }
 
     setHistory(prevHistory => {
       const current = prevHistory[historyIndex];
       let newState: AppState = { ...current };
-      // Ensure logs array exists
       if (!newState.logs) newState.logs = [];
 
       const userEmail = currentUser?.email || 'Unknown';
@@ -633,29 +655,24 @@ const App = () => {
       switch (action.type) {
         case 'ADD_PERSON': 
             newState.people = [...current.people, action.payload]; 
-            actionType = 'add';
-            logDetail = `Thêm thành viên: ${action.payload}`;
+            actionType = 'add'; logDetail = `Thêm thành viên: ${action.payload}`;
             break;
         case 'REMOVE_PERSON': 
             newState.people = current.people.filter(p => p !== action.payload); 
-            actionType = 'delete';
-            logDetail = `Xóa thành viên: ${action.payload}`;
+            actionType = 'delete'; logDetail = `Xóa thành viên: ${action.payload}`;
             break;
         case 'ADD_RECORD': 
             newState.records = [action.payload, ...current.records]; 
-            actionType = 'add';
-            logDetail = `Thêm chi tiêu: ${action.payload.title} (${formatCurrency(action.payload.totalAmount)})`;
+            actionType = 'add'; logDetail = `Thêm chi tiêu: ${action.payload.title} (${formatCurrency(action.payload.totalAmount)})`;
             break;
         case 'UPDATE_RECORD': 
             newState.records = current.records.map(r => r.id === action.payload.id ? action.payload : r); 
-            actionType = 'edit';
-            logDetail = `Sửa chi tiêu: ${action.payload.title}`;
+            actionType = 'edit'; logDetail = `Sửa chi tiêu: ${action.payload.title}`;
             break;
         case 'DELETE_RECORD': 
             const recordToDelete = current.records.find(r => r.id === action.payload);
             newState.records = current.records.filter(r => r.id !== action.payload); 
-            actionType = 'delete';
-            logDetail = `Xóa chi tiêu: ${recordToDelete ? recordToDelete.title : 'Không xác định'}`;
+            actionType = 'delete'; logDetail = `Xóa chi tiêu: ${recordToDelete ? recordToDelete.title : '...'}`;
             break;
         case 'TOGGLE_PAID':
           const recordToToggle = current.records.find(r => r.id === action.payload.recordId);
@@ -670,8 +687,7 @@ const App = () => {
               })
             };
           });
-          actionType = 'update_status';
-          logDetail = `Cập nhật thanh toán: ${action.payload.personName} cho khoản ${recordToToggle?.title}`;
+          actionType = 'update_status'; logDetail = `Cập nhật thanh toán: ${action.payload.personName} - ${recordToToggle?.title}`;
           break;
         case 'MARK_ALL_PAID':
           newState.records = current.records.map(r => ({
@@ -683,11 +699,9 @@ const App = () => {
               return p;
             })
           }));
-          actionType = 'update_status';
-          logDetail = `Trả hết nợ cho: ${action.payload.personName}`;
+          actionType = 'update_status'; logDetail = `Trả hết nợ cho: ${action.payload.personName}`;
           break;
         case 'LOAD_SAMPLE_DATA':
-          // ... logic cũ
           newState.people = ["Khánh", "Minh Anh", "Hiếu", "Chị Trang"];
           if (action.payload === 'full') {
             const now = new Date();
@@ -707,27 +721,22 @@ const App = () => {
                         { name: "Hiếu", paid: false },
                         { name: "Chị Trang", paid: false }
                     ]
-                },
-                // ...
+                }
             ];
           }
-          actionType = 'system';
-          logDetail = 'Nạp dữ liệu mẫu';
+          actionType = 'system'; logDetail = 'Nạp dữ liệu mẫu';
           break;
         case 'CLEAR_DATA': 
             newState = { people: [], records: [], logs: [] }; 
-            actionType = 'system';
-            logDetail = 'Xóa toàn bộ dữ liệu';
+            actionType = 'system'; logDetail = 'Xóa toàn bộ dữ liệu';
             break;
         case 'SET_STATE': 
             newState = action.payload; 
-            // Không log khi sync từ cloud
             logDetail = ''; 
             break;
         default: return prevHistory;
       }
 
-      // Add Log if details exist
       if (logDetail && action.type !== 'SET_STATE') {
           const newLog: LogEntry = {
               id: generateId(),
@@ -750,20 +759,21 @@ const App = () => {
   const handleRedo = () => historyIndex < history.length - 1 && setHistoryIndex(historyIndex + 1);
 
   const handleAddPerson = (name: string) => {
-    if (!currentUser) return alert("Vui lòng đăng nhập!");
+    if (!currentUser) return setToast({msg: "Vui lòng đăng nhập!", type: 'error'});
     const trimmedName = name.trim();
     if (trimmedName && !people.includes(trimmedName)) {
       dispatch({ type: 'ADD_PERSON', payload: trimmedName });
       setNewPersonName('');
+      setToast({msg: "Thêm thành viên thành công!", type: 'success'});
     }
   };
 
   const handleSaveRecord = (record: any, isEdit: boolean) => {
-     if (!currentUser) return alert("Vui lòng đăng nhập!");
-     if (!record.title) return alert('Thiếu nội dung chi!');
-     if (!record.totalAmount || record.totalAmount <= 0) return alert('Số tiền không hợp lệ!');
-     if (!record.payer) return alert('Chưa chọn người chi!');
-     if (!record.participants || record.participants.length === 0) return alert('Chưa chọn người tham gia!');
+     if (!currentUser) return setToast({msg: "Vui lòng đăng nhập!", type: 'error'});
+     if (!record.title) return setToast({msg: 'Thiếu nội dung chi!', type: 'error'});
+     if (!record.totalAmount || record.totalAmount <= 0 || isNaN(record.totalAmount)) return setToast({msg: 'Số tiền không hợp lệ!', type: 'error'});
+     if (!record.payer) return setToast({msg: 'Chưa chọn người chi!', type: 'error'});
+     if (!record.participants || record.participants.length === 0) return setToast({msg: 'Chưa chọn người tham gia!', type: 'error'});
 
      const perPerson = Math.ceil(record.totalAmount / record.participants.length);
      
@@ -790,8 +800,11 @@ const App = () => {
      if (isEdit) {
          dispatch({ type: 'UPDATE_RECORD', payload: finalRecord });
          setEditingRecord(null);
+         setToast({msg: "Cập nhật thành công!", type: 'success'});
      } else {
          dispatch({ type: 'ADD_RECORD', payload: finalRecord });
+         setFormResetKey(prev => prev + 1); // Trigger form reset
+         setToast({msg: "Lưu giao dịch thành công!", type: 'success'});
      }
   };
 
@@ -799,7 +812,6 @@ const App = () => {
       setExpandedReportRows(prev => ({ ...prev, [name]: !prev[name] }));
   }
 
-  // --- Logic for Unified View ---
   const filteredRecords = records.filter(r => r.date >= startDate && r.date <= endDate);
   const totalFilteredSpent = filteredRecords.reduce((sum, r) => sum + r.totalAmount, 0);
 
@@ -850,7 +862,6 @@ const App = () => {
   const sortedHistoryDates = Object.keys(historyByDate).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
-  // Helper for Log Icon
   const getLogIcon = (type: LogEntry['actionType']) => {
       switch(type) {
           case 'add': return <Plus className="w-4 h-4 text-green-600"/>;
@@ -864,10 +875,7 @@ const App = () => {
   return (
     <div className="min-h-screen font-sans flex flex-col text-gray-800 bg-gray-50">
       <style>{`
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-enter { animation: fadeInUp 0.3s ease-out forwards; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -875,8 +883,8 @@ const App = () => {
 
       {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setAuthModalOpen(false)} user={currentUser} />
+      {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
-      {/* Undo/Redo Controls (Only if logged in) */}
       {currentUser && (
         <div className="fixed bottom-6 right-6 z-40 flex flex-col gap-2">
             <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="bg-white p-3 rounded-full shadow-lg border hover:bg-blue-50 disabled:opacity-50 transition-all hover:scale-110 active:scale-95">
@@ -923,10 +931,7 @@ const App = () => {
                   </button>
               )}
               
-              <button 
-                onClick={() => setShowGuide(true)}
-                className="flex items-center gap-1 bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg text-sm font-bold transition-colors"
-              >
+              <button onClick={() => setShowGuide(true)} className="flex items-center gap-1 bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg text-sm font-bold transition-colors">
                 <BookOpen className="w-5 h-5 sm:w-4 sm:h-4"/>
               </button>
           </div>
@@ -941,7 +946,7 @@ const App = () => {
              { id: 'debt_history', icon: LayoutList, label: 'Theo Dõi' },
              { id: 'report', icon: PieChart, label: 'Báo Cáo' },
              { id: 'people', icon: Users, label: 'Thành Viên' },
-             { id: 'logs', icon: ScrollText, label: 'Lịch Sử' }, // New Tab
+             { id: 'logs', icon: ScrollText, label: 'Lịch Sử' },
            ].map(tab => (
              <button
                key={tab.id}
@@ -959,10 +964,7 @@ const App = () => {
         </nav>
       </div>
 
-      {/* Main Content */}
       <main className="max-w-5xl mx-auto w-full p-3 sm:p-4 pb-24 flex-1">
-        
-        {/* TAB 1: ENTRY */}
         {activeTab === 'entry' && (
           <div className="animate-enter max-w-2xl mx-auto">
             <AnimatedCard className="p-4 sm:p-6">
@@ -975,12 +977,13 @@ const App = () => {
                  currentUser={currentUser}
                  onSubmit={(data: any) => handleSaveRecord(data, false)}
                  submitLabel="LƯU GIAO DỊCH"
+                 resetKey={formResetKey}
               />
             </AnimatedCard>
           </div>
         )}
 
-        {/* TAB 2: DEBT & HISTORY */}
+        {/* ... (Các Tab khác giữ nguyên logic hiển thị) ... */}
         {activeTab === 'debt_history' && (
           <div className="space-y-6 animate-enter">
              <AnimatedCard className="p-4 flex flex-col md:flex-row gap-4 border-l-4 border-blue-500 items-center sticky top-[130px] z-10 shadow-md">
@@ -998,7 +1001,6 @@ const App = () => {
              </AnimatedCard>
 
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-                {/* CREDITORS */}
                 <AnimatedCard className="overflow-hidden border-green-100">
                     <div className="bg-green-50/80 p-4 border-b border-green-100 flex items-center justify-between backdrop-blur-sm">
                         <h4 className="font-bold text-green-800 flex items-center gap-2"><CheckCircle className="w-5 h-5" /> CẦN THU VỀ</h4>
@@ -1046,7 +1048,6 @@ const App = () => {
                     </div>
                 </AnimatedCard>
 
-                {/* DEBTORS */}
                 <AnimatedCard className="overflow-hidden border-red-100">
                     <div className="bg-red-50/80 p-4 border-b border-red-100 flex items-center justify-between backdrop-blur-sm">
                         <h4 className="font-bold text-red-800 flex items-center gap-2"><XCircle className="w-5 h-5" /> CẦN PHẢI TRẢ</h4>
@@ -1104,7 +1105,6 @@ const App = () => {
                                                 })}
                                             </div>
                                             
-                                            {/* PAID HISTORY */}
                                             <div className="bg-gray-50 rounded p-2 text-sm border border-gray-200">
                                                 <div className="text-[10px] font-bold text-gray-500 uppercase mb-2 border-b pb-1">Lịch sử đã trả</div>
                                                 {filteredRecords.map(r => {
@@ -1134,7 +1134,6 @@ const App = () => {
                 </AnimatedCard>
              </div>
 
-             {/* SECTION 2: TIMELINE */}
              <div className="mt-8 pt-8 border-t-2 border-dashed border-gray-200">
                  <div className="flex flex-col md:flex-row justify-between items-center mb-6">
                      <h3 className="font-bold text-lg text-gray-700 flex items-center gap-2"><History className="w-6 h-6 text-blue-600"/> Nhật Ký Giao Dịch</h3>
@@ -1154,7 +1153,6 @@ const App = () => {
                      sortedHistoryDates.map(date => (
                          <div key={date} className="relative pl-4 sm:pl-6 border-l-2 border-blue-200 ml-2 pb-6 last:pb-0">
                              <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-blue-500 border-4 border-white shadow-sm"></div>
-                             
                              <div className="mb-4">
                                  <div className="inline-block bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full mb-3 shadow-sm">
                                      {formatDayOfWeek(date)}, {formatDate(date)}
@@ -1176,7 +1174,6 @@ const App = () => {
                                                      <div className="text-xs text-gray-500 font-medium whitespace-nowrap">~{formatCurrency(record.perPersonAmount)}</div>
                                                  </div>
                                              </div>
-
                                              <div className="flex flex-wrap gap-2 mt-3 mb-4">
                                                  {record.participants.map(p => (
                                                      <div 
@@ -1185,12 +1182,10 @@ const App = () => {
                                                          ${p.paid ? 'bg-green-50 text-green-700 border-green-200 font-bold shadow-sm' : 'bg-gray-50 text-gray-500 border-gray-100'}`}
                                                          title={p.paid && p.paidAt ? `Đã trả lúc: ${formatDateTime(p.paidAt)}` : 'Chưa trả'}
                                                      >
-                                                         {p.name} 
-                                                         {p.paid && <CheckCircle className="w-3 h-3"/>}
+                                                         {p.name} {p.paid && <CheckCircle className="w-3 h-3"/>}
                                                      </div>
                                                  ))}
                                              </div>
-                                             
                                              {currentUser && (
                                                 <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
                                                     <button onClick={() => setEditingRecord(record)} className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-xs font-bold bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded transition-colors">
@@ -1212,7 +1207,6 @@ const App = () => {
           </div>
         )}
 
-        {/* TAB 4: REPORT */}
         {activeTab === 'report' && (
           <div className="space-y-6 animate-enter">
              <AnimatedCard className="p-4 flex flex-col md:flex-row items-end gap-4">
@@ -1244,7 +1238,6 @@ const App = () => {
                             </RePieChart>
                         </ResponsiveContainer>
                     </AnimatedCard>
-                    
                     <AnimatedCard className="p-4 h-72">
                         <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Biểu đồ Công nợ</h4>
                         <ResponsiveContainer width="100%" height="90%">
@@ -1268,7 +1261,7 @@ const App = () => {
                     <button onClick={() => {
                         const lines = netBalances.map(nb => `${nb.name}: ${formatCurrency(nb.net)}`).join('\n');
                         copyToClipboard(lines);
-                        alert('Đã copy!');
+                        setToast({msg: "Đã copy vào bộ nhớ tạm!", type: 'success'});
                     }} className="text-xs flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded font-medium transition-colors w-full sm:w-auto justify-center">
                         <Copy className="w-3 h-3"/> Copy nội dung
                     </button>
@@ -1329,7 +1322,6 @@ const App = () => {
           </div>
         )}
 
-        {/* TAB 5: PEOPLE */}
         {activeTab === 'people' && (
           <div className="animate-enter max-w-3xl mx-auto">
              <AnimatedCard className="p-4 sm:p-6">
@@ -1413,7 +1405,6 @@ const App = () => {
           </div>
         )}
 
-        {/* TAB 6: LOGS (New Feature) */}
         {activeTab === 'logs' && (
             <div className="animate-enter max-w-3xl mx-auto">
                 <AnimatedCard className="p-4 sm:p-6">
@@ -1447,7 +1438,6 @@ const App = () => {
 
       </main>
 
-      {/* EDIT MODAL */}
       {editingRecord && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100">
