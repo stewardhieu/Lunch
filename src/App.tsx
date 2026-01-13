@@ -294,6 +294,11 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
         return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
     };
 
+    // --- FIX: Move logic out of JSX to prevent Parsing Errors ---
+    const participantLabel = fParticipants.length > 0 
+        ? `${fParticipants.length} người được chọn` 
+        : 'Chọn thêm...';
+
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -321,7 +326,7 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
                 <div className="relative" ref={dropdownRef}>
                   <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Thêm người tham gia</label>
                   <button onClick={() => setFDropdownOpen(!fDropdownOpen)} className="w-full p-3 border rounded-lg bg-white text-left flex justify-between items-center focus:ring-2 focus:ring-blue-200">
-                      <span className="truncate text-gray-600">{fParticipants.length > 0 ? `${fParticipants.length} người được chọn` : 'Chọn thêm...'}</span>
+                      <span className="truncate text-gray-600">{participantLabel}</span>
                       <ChevronDown className="w-4 h-4"/>
                   </button>
                   {fDropdownOpen && (
@@ -527,6 +532,9 @@ const App = () => {
   const filteredRecords = records.filter(r => r.date >= startDate && r.date <= endDate);
   const totalFilteredSpent = filteredRecords.reduce((sum, r) => sum + r.totalAmount, 0);
 
+  // FIX: Safe check for logic outside JSX
+  const hasFilteredRecords = filteredRecords.length > 0;
+
   const getNetBalances = () => {
     const balances: Record<string, { owed: number, debt: number, net: number, meals: any[] }> = {};
     people.forEach(p => balances[p] = { owed: 0, debt: 0, net: 0, meals: [] });
@@ -730,7 +738,8 @@ const App = () => {
                       <div className="w-full md:w-auto"><label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Đến ngày</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/></div>
                       <div className="w-full md:flex-1 text-right mt-2 md:mt-0"><div className="text-xs text-gray-500 uppercase font-bold mb-1">Tổng chi tiêu (Lọc)</div><div className="text-2xl font-bold text-blue-800">{formatCurrency(totalFilteredSpent)}</div></div>
                   </AnimatedCard>
-                  {filteredRecords.length > 0 && (
+                  {/* FIX: Move logic check out of JSX */}
+                  {hasFilteredRecords && (
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                            <AnimatedCard className="p-4 h-72">
                                <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Tỷ trọng chi tiêu</h4>
