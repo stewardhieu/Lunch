@@ -282,7 +282,6 @@ const AuthModal = ({ isOpen, onClose, user }: { isOpen: boolean, onClose: () => 
                 <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
                     <h3 className="font-bold text-lg text-gray-800">
                         {mode === 'login' && 'Đăng Nhập'}
-                        mode === 'register' && 'Đăng Ký Tài Khoản'
                         {mode === 'forgot' && 'Quên Mật Khẩu'}
                         {mode === 'changePass' && 'Đổi Mật Khẩu'}
                     </h3>
@@ -315,7 +314,6 @@ const AuthModal = ({ isOpen, onClose, user }: { isOpen: boolean, onClose: () => 
                     )}
 
                     <button disabled={loading} type="submit" className="w-full bg-blue-800 text-white py-3 rounded-lg font-bold hover:bg-blue-900 transition-all disabled:opacity-50">
-                        {loading ? 'Đang xử lý...' : (mode === 'login' ? 'Đăng Nhập' : mode === 'register' ? 'Đăng Ký' : mode === 'forgot' ? 'Gửi Email' : 'Cập Nhật')}
                     </button>
 
                     {!user && (
@@ -323,7 +321,6 @@ const AuthModal = ({ isOpen, onClose, user }: { isOpen: boolean, onClose: () => 
                             {mode === 'login' ? (
                                 <>
                                     <span className="text-gray-500 cursor-pointer hover:text-blue-600" onClick={() => setMode('forgot')}>Quên mật khẩu?</span>
-                                    span className="text-blue-600 font-bold cursor-pointer hover:underline" onClick={() => setMode('register')}>Đăng ký mới</span
                                 </>
                             ) : (
                                 <span className="text-blue-600 font-bold cursor-pointer hover:underline w-full text-center" onClick={() => setMode('login')}>Quay lại đăng nhập</span>
