@@ -294,10 +294,10 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
         return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
     };
 
-    // --- FIX: Move logic out of JSX to prevent Parsing Errors ---
-    const participantLabel = fParticipants.length > 0 
-        ? `${fParticipants.length} người được chọn` 
-        : 'Chọn thêm...';
+    // --- FIX: LOGIC MOVED OUTSIDE JSX ---
+    const hasParticipants = fParticipants.length > 0;
+    const participantLabel = hasParticipants ? `${fParticipants.length} người được chọn` : 'Chọn thêm...';
+    const isParticipantListEmpty = fParticipants.length === 0;
 
     return (
         <div className="space-y-4">
@@ -342,7 +342,7 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
             </div>
             <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
                 <label className="text-xs font-bold text-gray-500 uppercase block mb-2">Danh sách chia tiền ({fParticipants.length})</label>
-                {fParticipants.length === 0 ? <div className="text-center text-gray-400 text-xs py-4 italic">Chưa chọn ai</div> : (
+                {isParticipantListEmpty ? <div className="text-center text-gray-400 text-xs py-4 italic">Chưa chọn ai</div> : (
                     <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                         {fParticipants.map(p => (
                             <div key={p.name} className="flex items-start justify-between bg-white p-3 rounded-lg border border-gray-200 shadow-sm transition-all hover:border-blue-300">
@@ -532,7 +532,7 @@ const App = () => {
   const filteredRecords = records.filter(r => r.date >= startDate && r.date <= endDate);
   const totalFilteredSpent = filteredRecords.reduce((sum, r) => sum + r.totalAmount, 0);
 
-  // FIX: Safe check for logic outside JSX
+  // FIX: CALCULATE BOOLEANS OUTSIDE JSX
   const hasFilteredRecords = filteredRecords.length > 0;
 
   const getNetBalances = () => {
@@ -560,6 +560,12 @@ const App = () => {
   const historyByDate = filteredRecords.reduce((acc, record) => { const d = record.date; if (!acc[d]) acc[d] = []; acc[d].push(record); return acc; }, {} as Record<string, MealRecord[]>);
   const sortedHistoryDates = Object.keys(historyByDate).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+
+  // FIX: CALCULATE MORE BOOLEANS
+  const isCreditorsEmpty = creditors.length === 0;
+  const isDebtorsEmpty = debtors.length === 0;
+  const isHistoryEmpty = sortedHistoryDates.length === 0;
+  const isPeopleListEmpty = people.length === 0;
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-blue-900 font-bold"><Loader2 className="w-8 h-8 animate-spin mr-2"/> Đang tải...</div>;
   if (!currentUser) return <LoginScreen onLoginSuccess={setCurrentUser} />;
@@ -631,7 +637,7 @@ const App = () => {
                     <AnimatedCard className="overflow-hidden border-green-100">
                         <div className="bg-green-50/80 p-4 border-b border-green-100 flex items-center justify-between backdrop-blur-sm"><h4 className="font-bold text-green-800 flex items-center gap-2"><CheckCircle className="w-5 h-5" /> CẦN THU VỀ</h4></div>
                         <div className="divide-y divide-gray-100">
-                            {creditors.length === 0 && <div className="p-8 text-center text-gray-400 text-sm">Không có khoản cần thu.</div>}
+                            {isCreditorsEmpty && <div className="p-8 text-center text-gray-400 text-sm">Không có khoản cần thu.</div>}
                             {creditors.map(item => (
                                 <div key={item.name} className="p-4 bg-white hover:bg-green-50/20">
                                     <div className="flex justify-between items-center cursor-pointer" onClick={() => setExpandedCreditor(expandedCreditor === item.name ? null : item.name)}>
@@ -661,7 +667,7 @@ const App = () => {
                     <AnimatedCard className="overflow-hidden border-red-100">
                         <div className="bg-red-50/80 p-4 border-b border-red-100 flex items-center justify-between backdrop-blur-sm"><h4 className="font-bold text-red-800 flex items-center gap-2"><XCircle className="w-5 h-5" /> CẦN PHẢI TRẢ</h4></div>
                         <div className="divide-y divide-gray-100">
-                             {debtors.length === 0 && <div className="p-8 text-center text-gray-400 text-sm">Không có khoản nợ.</div>}
+                             {isDebtorsEmpty && <div className="p-8 text-center text-gray-400 text-sm">Không có khoản nợ.</div>}
                              {debtors.map(item => (
                                  <div key={item.name} className="p-4 bg-white hover:bg-red-50/10">
                                      <div className="flex justify-between items-center cursor-pointer" onClick={() => setExpandedPerson(expandedPerson === item.name ? null : item.name)}>
@@ -697,7 +703,7 @@ const App = () => {
                 </div>
                 <div className="mt-8 pt-8 border-t-2 border-dashed border-gray-200">
                      <div className="flex flex-col md:flex-row justify-between items-center mb-6"><h3 className="font-bold text-lg text-gray-700 flex items-center gap-2"><History className="w-6 h-6 text-blue-600"/> Nhật Ký Giao Dịch</h3></div>
-                     {sortedHistoryDates.length === 0 ? <div className="text-center py-12 text-gray-400 bg-white rounded-xl border-2 border-dashed border-gray-200">Không có dữ liệu.</div> : (
+                     {isHistoryEmpty ? <div className="text-center py-12 text-gray-400 bg-white rounded-xl border-2 border-dashed border-gray-200">Không có dữ liệu.</div> : (
                          sortedHistoryDates.map(date => (
                              <div key={date} className="relative pl-4 sm:pl-6 border-l-2 border-blue-200 ml-2 pb-6 last:pb-0">
                                  <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-blue-500 border-4 border-white shadow-sm"></div>
@@ -738,7 +744,6 @@ const App = () => {
                       <div className="w-full md:w-auto"><label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Đến ngày</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/></div>
                       <div className="w-full md:flex-1 text-right mt-2 md:mt-0"><div className="text-xs text-gray-500 uppercase font-bold mb-1">Tổng chi tiêu (Lọc)</div><div className="text-2xl font-bold text-blue-800">{formatCurrency(totalFilteredSpent)}</div></div>
                   </AnimatedCard>
-                  {/* FIX: Move logic check out of JSX */}
                   {hasFilteredRecords && (
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                            <AnimatedCard className="p-4 h-72">
@@ -773,7 +778,7 @@ const App = () => {
                      <input type="text" value={newPersonName} onChange={(e) => setNewPersonName(e.target.value)} placeholder="Nhập tên thành viên..." className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none transition-all" onKeyDown={(e) => e.key === 'Enter' && handleAddPerson(newPersonName)}/>
                      <button onClick={() => handleAddPerson(newPersonName)} className="text-white px-5 rounded-lg font-bold hover:opacity-90 transition-all shadow-md active:scale-95" style={{ backgroundColor: THEME_COLOR }}><Plus className="w-5 h-5" /></button>
                  </div>
-                 {people.length === 0 ? <div className="text-center text-gray-400 py-12 border-2 border-dashed border-gray-200 rounded-xl">Chưa có thành viên nào.</div> : (
+                 {isPeopleListEmpty ? <div className="text-center text-gray-400 py-12 border-2 border-dashed border-gray-200 rounded-xl">Chưa có thành viên nào.</div> : (
                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                          {people.map((person, idx) => (
                              <div key={person} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg hover:shadow-md transition-all group" style={{ animationDelay: `${idx * 0.05}s` }}>
