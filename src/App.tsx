@@ -3,8 +3,8 @@ import {
   Plus, Trash2, Users, Calendar, CheckCircle, XCircle, 
   ChevronDown, Copy, UtensilsCrossed, 
   PieChart, RotateCcw, RotateCw, Filter, Edit3, Database, X, 
-  History, ArrowRight, BookOpen, LogIn, LogOut, User, Key, Lock
-  LayoutList
+  History, ArrowRight, BookOpen, LogIn, LogOut, User, Key, Lock, 
+  LayoutList // <--- Đã thêm LayoutList và dấu phẩy đầy đủ
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie
