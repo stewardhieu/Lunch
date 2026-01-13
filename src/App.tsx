@@ -4,6 +4,7 @@ import {
   ChevronDown, Copy, UtensilsCrossed, 
   PieChart, RotateCcw, RotateCw, Filter, Edit3, Database, X, 
   History, ArrowRight, BookOpen, LogIn, LogOut, User, Key, Lock
+  LayoutList
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie
