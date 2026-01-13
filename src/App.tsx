@@ -1,16 +1,22 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Plus, Trash2, Users, DollarSign, Calendar, CheckCircle, XCircle, 
-  ChevronDown, ChevronUp, Copy, Save, UtensilsCrossed, 
-  PieChart, RotateCcw, RotateCw, Filter, Clock, Edit3, Database, Search, X, 
-  RefreshCcw, LayoutList, TrendingUp, History, ArrowRight, HelpCircle, FileText, ChevronRight, AlertCircle, BookOpen, User, Menu
+  Plus, Trash2, Users, CheckCircle, XCircle, 
+  ChevronDown, Copy, UtensilsCrossed, 
+  PieChart, Filter, Edit3, Database, Search, X, 
+  LayoutList, History, ArrowRight, BookOpen, FileText, ChevronRight
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie
 } from 'recharts';
 
+// --- FIREBASE IMPORTS ---
+import { db } from './firebase';
+import { 
+  collection, onSnapshot, addDoc, setDoc, deleteDoc, updateDoc, doc, query, orderBy, Timestamp 
+} from 'firebase/firestore';
+
 // --- Theme & Style ---
-const THEME_COLOR = '#000066'; // Navy Blue
+const THEME_COLOR = '#000066'; 
 
 // --- Types ---
 interface ParticipantStatus {
@@ -30,23 +36,9 @@ interface MealRecord {
   participants: ParticipantStatus[];
 }
 
-interface AppState {
-  people: string[];
-  records: MealRecord[];
+interface Person {
+    name: string;
 }
-
-// --- Actions ---
-type Action = 
-  | { type: 'SET_STATE'; payload: AppState }
-  | { type: 'ADD_PERSON'; payload: string }
-  | { type: 'REMOVE_PERSON'; payload: string }
-  | { type: 'ADD_RECORD'; payload: MealRecord }
-  | { type: 'UPDATE_RECORD'; payload: MealRecord }
-  | { type: 'DELETE_RECORD'; payload: string }
-  | { type: 'TOGGLE_PAID'; payload: { recordId: string, personName: string } }
-  | { type: 'MARK_ALL_PAID'; payload: { personName: string } }
-  | { type: 'LOAD_SAMPLE_DATA'; payload: 'full' | 'people_only' }
-  | { type: 'CLEAR_DATA'; };
 
 // --- Helper Functions ---
 const formatCurrency = (amount: number) => {
@@ -85,30 +77,24 @@ const copyToClipboard = (text: string) => {
   if (navigator.clipboard && window.isSecureContext) {
     return navigator.clipboard.writeText(text);
   } else {
+    // Fallback for older browsers
     const textArea = document.createElement("textarea");
     textArea.value = text;
     textArea.style.position = "fixed";
     textArea.style.left = "-9999px";
-    textArea.style.top = "0";
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
-    return new Promise<void>((resolve, reject) => {
-      try {
-        const successful = document.execCommand('copy');
-        document.body.removeChild(textArea);
-        if (successful) resolve();
-        else reject(new Error('Copy command failed'));
-      } catch (err) {
-        document.body.removeChild(textArea);
-        reject(err);
-      }
-    });
+    try {
+        document.execCommand('copy');
+    } catch (err) {
+        console.error('Copy failed', err);
+    }
+    document.body.removeChild(textArea);
   }
 };
 
 // --- Custom Components ---
-
 const AnimatedCard = ({ children, className = "", delay = 0 }: { children: React.ReactNode, className?: string, delay?: number }) => (
   <div 
     className={`bg-white rounded-xl shadow-sm border border-gray-200 transition-all duration-500 hover:shadow-md ${className}`}
@@ -144,27 +130,19 @@ const GuideModal = ({ onClose }: { onClose: () => void }) => (
             <div className="p-6 overflow-y-auto space-y-6 text-gray-700 leading-relaxed">
                 <section>
                     <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">1. Quy trình cơ bản</h4>
-                    <p className="mb-2">Ứng dụng hoạt động theo quy tắc: <b>Một người trả tiền trước, sau đó chia đều cho những người cùng ăn.</b></p>
+                    <p className="mb-2">Ứng dụng tự động đồng bộ Online.</p>
                     <ul className="list-disc pl-5 space-y-1 text-sm">
-                        <li><b>Bước 1:</b> Vào tab <b>Thành Viên</b> để nhập tên mọi người trong nhóm (Chỉ cần làm 1 lần).</li>
-                        <li><b>Bước 2:</b> Khi đi ăn, vào tab <b>Nhập Liệu</b>. Chọn ngày, món ăn, tổng tiền. Quan trọng nhất là chọn đúng <b>Người trả tiền</b> (Chủ nợ) và tick chọn những <b>Người ăn</b> (bao gồm cả người trả nếu họ cũng ăn).</li>
-                        <li><b>Bước 3:</b> Bấm <b>Lưu</b>. Hệ thống tự động chia tiền và ghi nợ.</li>
+                        <li><b>Bước 1:</b> Vào tab <b>Thành Viên</b> để nhập tên mọi người.</li>
+                        <li><b>Bước 2:</b> Vào tab <b>Nhập Liệu</b> để thêm món ăn, người trả và người ăn.</li>
+                        <li><b>Bước 3:</b> Bấm <b>Lưu</b>. Hệ thống tự động chia tiền.</li>
                     </ul>
                 </section>
                  <section>
-                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">2. Theo dõi & Thanh toán nợ</h4>
+                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">2. Trả nợ</h4>
                     <ul className="list-disc pl-5 space-y-1 text-sm">
-                        <li><b>Cột Cần Thu Về (Màu Xanh):</b> Dành cho người đã ứng tiền. Bấm vào tên để xem chi tiết.</li>
-                        <li><b>Cột Cần Phải Trả (Màu Đỏ):</b> Dành cho người ăn ké. Bấm vào tên để xem mình đang nợ những khoản nào.</li>
-                        <li><b>Cách trả nợ:</b> Tick vào ô vuông <input type="checkbox" className="align-middle" /> bên cạnh món ăn. Khoản đó sẽ chuyển xuống mục <b>"Lịch sử đã trả"</b>.</li>
-                    </ul>
-                </section>
-                 <section>
-                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">3. Chỉnh sửa & Cập nhật ngày trả</h4>
-                    <p className="mb-2 text-sm">Khi bấm nút <b>Sửa</b> (biểu tượng bút chì) ở Nhật ký giao dịch:</p>
-                    <ul className="list-disc pl-5 space-y-1 text-sm">
-                        <li>Bạn có thể tick chọn <b>"Đã trả"</b> cho từng người.</li>
-                        <li>Khi tick chọn, một ô chọn <b>Ngày giờ</b> sẽ hiện ra bên dưới. Bạn có thể bấm vào đó để sửa lại ngày trả nợ.</li>
+                        <li>Vào tab <b>Theo Dõi</b>.</li>
+                        <li>Tìm tên mình ở cột <b>Cần Phải Trả</b>.</li>
+                        <li>Tick vào ô vuông <input type="checkbox" className="align-middle" /> để đánh dấu đã trả tiền.</li>
                     </ul>
                 </section>
             </div>
@@ -177,7 +155,7 @@ const GuideModal = ({ onClose }: { onClose: () => void }) => (
     </div>
 );
 
-// --- Refactored RecordForm (Outside App) ---
+// --- Form Component ---
 const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: { 
     initialData: any, 
     onSubmit: (data: any) => void, 
@@ -223,7 +201,7 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
             return p;
         }));
     };
-
+    
     const updatePaidDate = (name: string, dateValue: string) => {
         setFParticipants(fParticipants.map(p => {
             if (p.name === name) {
@@ -296,7 +274,6 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
                 </div>
             </div>
             
-            {/* Detailed Participant List with Paid Toggle */}
             <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
                 <label className="text-xs font-bold text-gray-500 uppercase block mb-2">Danh sách chia tiền ({fParticipants.length})</label>
                 {fParticipants.length === 0 ? (
@@ -324,8 +301,6 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
                                           className="w-4 h-4 accent-green-600 cursor-pointer"
                                         />
                                     </div>
-                                    
-                                    {/* Date Picker for Paid Participants (Not Payer) */}
                                     {p.paid && p.name !== fPayer && (
                                         <div className="animate-in fade-in slide-in-from-top-1">
                                             <input 
@@ -358,171 +333,62 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
 };
 
 const App = () => {
-  // --- History & State ---
-  const [history, setHistory] = useState<AppState[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const currentState = history[historyIndex] || { people: [], records: [] };
-  const { people, records } = currentState;
+  // --- Firebase State ---
+  const [people, setPeople] = useState<string[]>([]);
+  const [records, setRecords] = useState<MealRecord[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // --- UI State ---
   const [activeTab, setActiveTab] = useState<'entry' | 'debt_history' | 'report' | 'people'>('entry');
   const [showGuide, setShowGuide] = useState(false);
-  
-  // Edit Modal State
   const [editingRecord, setEditingRecord] = useState<MealRecord | null>(null);
-
-  // New Person Input
   const [newPersonName, setNewPersonName] = useState('');
-
-  // Unified Filter State (Date Range)
-  const [startDate, setStartDate] = useState(
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
-  );
+  const [startDate, setStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
-
-  // Expanded State
   const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
   const [expandedCreditor, setExpandedCreditor] = useState<string | null>(null);
-  const [showSampleOptions, setShowSampleOptions] = useState(false);
   const [expandedReportRows, setExpandedReportRows] = useState<Record<string, boolean>>({});
 
-  // --- Initialization ---
+  // --- Firebase Listeners ---
   useEffect(() => {
-    const savedPeople = localStorage.getItem('lunch_people_v13');
-    const savedRecords = localStorage.getItem('lunch_records_v13');
-    const initialState: AppState = {
-      people: savedPeople ? JSON.parse(savedPeople) : [],
-      records: savedRecords ? JSON.parse(savedRecords) : []
-    };
-    setHistory([initialState]);
-    setHistoryIndex(0);
+    // 1. Listen for People
+    const unsubPeople = onSnapshot(collection(db, "people"), (snapshot) => {
+        const list = snapshot.docs.map(doc => doc.data().name).sort();
+        setPeople(list);
+    });
+
+    // 2. Listen for Records
+    const q = query(collection(db, "records"), orderBy("createdAt", "desc"));
+    const unsubRecords = onSnapshot(q, (snapshot) => {
+        const list = snapshot.docs.map(doc => doc.data() as MealRecord);
+        setRecords(list);
+        setLoading(false);
+    });
+
+    return () => {
+        unsubPeople();
+        unsubRecords();
+    }
   }, []);
 
-  useEffect(() => {
-    if (history.length > 0) {
-      localStorage.setItem('lunch_people_v13', JSON.stringify(people));
-      localStorage.setItem('lunch_records_v13', JSON.stringify(records));
-    }
-  }, [people, records, history]);
-
-  // --- Dispatcher ---
-  const dispatch = useCallback((action: Action) => {
-    setHistory(prevHistory => {
-      const current = prevHistory[historyIndex];
-      let newState: AppState = { ...current };
-
-      switch (action.type) {
-        case 'ADD_PERSON':
-          newState.people = [...current.people, action.payload];
-          break;
-        case 'REMOVE_PERSON':
-          newState.people = current.people.filter(p => p !== action.payload);
-          break;
-        case 'ADD_RECORD':
-          newState.records = [action.payload, ...current.records];
-          break;
-        case 'UPDATE_RECORD':
-          newState.records = current.records.map(r => 
-            r.id === action.payload.id ? action.payload : r
-          );
-          break;
-        case 'DELETE_RECORD':
-          newState.records = current.records.filter(r => r.id !== action.payload);
-          break;
-        case 'TOGGLE_PAID':
-          newState.records = current.records.map(r => {
-            if (r.id !== action.payload.recordId) return r;
-            return {
-              ...r,
-              participants: r.participants.map(p => {
-                if (p.name !== action.payload.personName) return p;
-                const newPaidStatus = !p.paid;
-                return { 
-                  ...p, 
-                  paid: newPaidStatus,
-                  paidAt: newPaidStatus ? new Date().toISOString() : null
-                };
-              })
-            };
-          });
-          break;
-        case 'MARK_ALL_PAID':
-          newState.records = current.records.map(r => ({
-            ...r,
-            participants: r.participants.map(p => {
-              if (p.name === action.payload.personName && !p.paid && r.payer !== p.name) {
-                return { ...p, paid: true, paidAt: new Date().toISOString() };
-              }
-              return p;
-            })
-          }));
-          break;
-        case 'LOAD_SAMPLE_DATA':
-          newState.people = ["Khánh", "Minh Anh", "Hiếu", "Chị Trang"];
-          if (action.payload === 'full') {
-            const now = new Date();
-            const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
-            newState.records = [
-                {
-                    id: generateId(),
-                    date: now.toISOString().slice(0, 10),
-                    createdAt: Date.now(),
-                    title: "Cafe sáng (Team họp)",
-                    totalAmount: 180000,
-                    perPersonAmount: 45000,
-                    payer: "Khánh",
-                    participants: [
-                        { name: "Khánh", paid: true, paidAt: now.toISOString() },
-                        { name: "Minh Anh", paid: false },
-                        { name: "Hiếu", paid: false },
-                        { name: "Chị Trang", paid: false }
-                    ]
-                },
-                {
-                    id: generateId(),
-                    date: yesterday.toISOString().slice(0, 10),
-                    createdAt: Date.now() - 10000,
-                    title: "Cơm tấm sườn bì",
-                    totalAmount: 220000,
-                    perPersonAmount: 55000,
-                    payer: "Chị Trang",
-                    participants: [
-                        { name: "Khánh", paid: true, paidAt: now.toISOString() },
-                        { name: "Minh Anh", paid: false },
-                        { name: "Hiếu", paid: false },
-                        { name: "Chị Trang", paid: true, paidAt: yesterday.toISOString() }
-                    ]
-                }
-            ];
-          }
-          break;
-        case 'CLEAR_DATA':
-            newState = { people: [], records: [] };
-            break;
-        default:
-          return prevHistory;
-      }
-
-      const newHistory = prevHistory.slice(0, historyIndex + 1);
-      newHistory.push(newState);
-      setHistoryIndex(newHistory.length - 1);
-      return newHistory;
-    });
-  }, [historyIndex]);
-
-  // --- Handlers ---
-  const handleUndo = () => historyIndex > 0 && setHistoryIndex(historyIndex - 1);
-  const handleRedo = () => historyIndex < history.length - 1 && setHistoryIndex(historyIndex + 1);
-
-  const handleAddPerson = (name: string) => {
+  // --- Handlers (Direct Firebase Operations) ---
+  
+  const handleAddPerson = async (name: string) => {
     const trimmedName = name.trim();
     if (trimmedName && !people.includes(trimmedName)) {
-      dispatch({ type: 'ADD_PERSON', payload: trimmedName });
+      // Use name as Doc ID to prevent duplicates easily
+      await setDoc(doc(db, "people", trimmedName), { name: trimmedName });
       setNewPersonName('');
     }
   };
 
-  const handleSaveRecord = (record: any, isEdit: boolean) => {
+  const handleRemovePerson = async (name: string) => {
+      if(confirm(`Bạn có chắc muốn xóa ${name}?`)) {
+          await deleteDoc(doc(db, "people", name));
+      }
+  }
+
+  const handleSaveRecord = async (record: any, isEdit: boolean) => {
      if (!record.title) return alert('Thiếu nội dung chi!');
      if (!record.totalAmount || record.totalAmount <= 0) return alert('Số tiền không hợp lệ!');
      if (!record.payer) return alert('Chưa chọn người chi!');
@@ -530,13 +396,12 @@ const App = () => {
 
      const perPerson = Math.ceil(record.totalAmount / record.participants.length);
      
-     // Correctly map participant status from form data
      const fullParticipants: ParticipantStatus[] = record.participants.map((p: any) => {
         const isPayer = p.name === record.payer;
         return {
-            name: p.name,
-            paid: isPayer ? true : p.paid, // Payer is always considered paid
-            paidAt: isPayer ? (p.paidAt || new Date().toISOString()) : (p.paid ? (p.paidAt || new Date().toISOString()) : null)
+           name: p.name,
+           paid: isPayer ? true : p.paid, 
+           paidAt: isPayer ? (p.paidAt || new Date().toISOString()) : (p.paid ? (p.paidAt || new Date().toISOString()) : null)
         };
      });
 
@@ -551,21 +416,66 @@ const App = () => {
          participants: fullParticipants
      };
 
-     if (isEdit) {
-         dispatch({ type: 'UPDATE_RECORD', payload: finalRecord });
-         setEditingRecord(null);
-     } else {
-         dispatch({ type: 'ADD_RECORD', payload: finalRecord });
-         // Alert or toast could go here
-     }
+     // Save to Firestore
+     await setDoc(doc(db, "records", finalRecord.id), finalRecord);
+     
+     if (isEdit) setEditingRecord(null);
+     else alert('Đã lưu thành công!');
   };
 
-  const toggleReportRow = (name: string) => {
-      setExpandedReportRows(prev => ({ ...prev, [name]: !prev[name] }));
+  const handleDeleteRecord = async (id: string) => {
+      if(confirm('Xóa giao dịch này?')) {
+          await deleteDoc(doc(db, "records", id));
+      }
+  }
+
+  const handleTogglePaid = async (record: MealRecord, personName: string) => {
+      const updatedParticipants = record.participants.map(p => {
+          if (p.name !== personName) return p;
+          const newPaid = !p.paid;
+          return { ...p, paid: newPaid, paidAt: newPaid ? new Date().toISOString() : null };
+      });
+      
+      const recordRef = doc(db, "records", record.id);
+      await updateDoc(recordRef, { participants: updatedParticipants });
+  }
+
+  const handleMarkAllPaid = async (personName: string) => {
+      // Find all unpaid records for this person
+      const unpaidRecords = records.filter(r => 
+        r.participants.some(p => p.name === personName && !p.paid && r.payer !== personName)
+      );
+
+      // Batch updates are better, but looping updateDoc is simpler for now
+      for (const r of unpaidRecords) {
+          const updatedParticipants = r.participants.map(p => {
+              if (p.name === personName && !p.paid) {
+                  return { ...p, paid: true, paidAt: new Date().toISOString() };
+              }
+              return p;
+          });
+          await updateDoc(doc(db, "records", r.id), { participants: updatedParticipants });
+      }
+  }
+
+  const handleClearData = async () => {
+      if(confirm('CẢNH BÁO: Hành động này sẽ xóa sạch dữ liệu trên Database của TẤT CẢ mọi người. Bạn có chắc không?')) {
+          // Delete all records
+          records.forEach(r => deleteDoc(doc(db, "records", r.id)));
+          // Delete all people
+          people.forEach(p => deleteDoc(doc(db, "people", p)));
+      }
+  }
+
+  const handleLoadSample = async () => {
+      const samplePeople = ["Khánh", "Minh Anh", "Hiếu", "Chị Trang"];
+      for(const p of samplePeople) {
+          await setDoc(doc(db, "people", p), { name: p });
+      }
+      alert('Đã thêm người mẫu!');
   }
 
   // --- Logic for Unified View ---
-
   const filteredRecords = records.filter(r => r.date >= startDate && r.date <= endDate);
   const totalFilteredSpent = filteredRecords.reduce((sum, r) => sum + r.totalAmount, 0);
 
@@ -622,6 +532,12 @@ const App = () => {
   const sortedHistoryDates = Object.keys(historyByDate).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
+  const toggleReportRow = (name: string) => {
+    setExpandedReportRows(prev => ({ ...prev, [name]: !prev[name] }));
+  }
+
+  if (loading) return <div className="h-screen flex items-center justify-center text-blue-800 font-bold">Đang tải dữ liệu...</div>;
+
   return (
     <div className="min-h-screen font-sans flex flex-col text-gray-800 bg-gray-50">
       <style>{`
@@ -636,16 +552,6 @@ const App = () => {
 
       {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
 
-      {/* Undo/Redo Controls */}
-      <div className="fixed bottom-6 right-6 z-40 flex flex-col gap-2">
-        <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="bg-white p-3 rounded-full shadow-lg border hover:bg-blue-50 disabled:opacity-50 transition-all hover:scale-110 active:scale-95">
-            <RotateCw className="w-5 h-5 text-gray-700" />
-        </button>
-        <button onClick={handleUndo} disabled={historyIndex <= 0} className="bg-white p-3 rounded-full shadow-lg border hover:bg-blue-50 disabled:opacity-50 transition-all hover:scale-110 active:scale-95">
-            <RotateCcw className="w-5 h-5 text-gray-700" />
-        </button>
-      </div>
-
       {/* Header */}
       <header className="text-white p-4 shadow-lg sticky top-0 z-30 transition-all" style={{ backgroundColor: THEME_COLOR }}>
         <div className="max-w-5xl mx-auto flex justify-between items-center">
@@ -655,9 +561,9 @@ const App = () => {
             </div>
             <div>
                 <h1 className="text-lg font-bold uppercase tracking-wide leading-tight flex items-center gap-1">
-                    Sổ Ăn Uống <span className="text-yellow-400 text-xs bg-white/20 px-1.5 py-0.5 rounded ml-1 hidden sm:inline-block">Pro</span>
+                    Sổ Ăn Uống <span className="text-yellow-400 text-xs bg-white/20 px-1.5 py-0.5 rounded ml-1 hidden sm:inline-block">Online</span>
                 </h1>
-                <span className="text-xs text-blue-200 opacity-80 font-medium hidden sm:block">Quản lý tài chính văn phòng</span>
+                <span className="text-xs text-blue-200 opacity-80 font-medium hidden sm:block">Đồng bộ Cloud Firestore</span>
             </div>
           </div>
           <button 
@@ -669,7 +575,7 @@ const App = () => {
         </div>
       </header>
 
-      {/* Navigation - Responsive Scroll */}
+      {/* Navigation */}
       <div className="bg-white shadow-sm sticky top-[72px] z-20 border-b border-gray-100">
         <nav className="max-w-5xl mx-auto flex overflow-x-auto no-scrollbar snap-x">
            {[
@@ -714,27 +620,26 @@ const App = () => {
           </div>
         )}
 
-        {/* TAB 2: DEBT & HISTORY (MERGED) */}
+        {/* TAB 2: DEBT & HISTORY */}
         {activeTab === 'debt_history' && (
           <div className="space-y-6 animate-enter">
-             
-             {/* Unified Filter */}
-             <AnimatedCard className="p-4 flex flex-col md:flex-row gap-4 border-l-4 border-blue-500 items-center sticky top-[130px] z-10 shadow-md">
-                <div className="flex flex-col sm:flex-row gap-2 items-center flex-1 w-full">
-                    <div className="flex items-center gap-2 w-full sm:w-auto mb-1 sm:mb-0">
-                        <Filter className="w-4 h-4 text-gray-500"/>
-                        <span className="text-xs font-bold text-gray-500 uppercase whitespace-nowrap">Lọc từ:</span>
-                    </div>
-                    <div className="flex items-center gap-2 w-full">
-                        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border border-gray-300 p-2 rounded text-sm outline-none flex-1 w-full"/>
-                        <ArrowRight className="w-4 h-4 text-gray-400 shrink-0"/>
-                        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="border border-gray-300 p-2 rounded text-sm outline-none flex-1 w-full"/>
-                    </div>
-                </div>
-             </AnimatedCard>
+              {/* Filter */}
+              <AnimatedCard className="p-4 flex flex-col md:flex-row gap-4 border-l-4 border-blue-500 items-center sticky top-[130px] z-10 shadow-md">
+                 <div className="flex flex-col sm:flex-row gap-2 items-center flex-1 w-full">
+                     <div className="flex items-center gap-2 w-full sm:w-auto mb-1 sm:mb-0">
+                         <Filter className="w-4 h-4 text-gray-500"/>
+                         <span className="text-xs font-bold text-gray-500 uppercase whitespace-nowrap">Lọc từ:</span>
+                     </div>
+                     <div className="flex items-center gap-2 w-full">
+                         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border border-gray-300 p-2 rounded text-sm outline-none flex-1 w-full"/>
+                         <ArrowRight className="w-4 h-4 text-gray-400 shrink-0"/>
+                         <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="border border-gray-300 p-2 rounded text-sm outline-none flex-1 w-full"/>
+                     </div>
+                 </div>
+              </AnimatedCard>
 
-             {/* SECTION 1: NET BALANCES */}
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+              {/* NET BALANCES */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
                 {/* CREDITORS */}
                 <AnimatedCard className="overflow-hidden border-green-100">
                     <div className="bg-green-50/80 p-4 border-b border-green-100 flex items-center justify-between backdrop-blur-sm">
@@ -756,26 +661,26 @@ const App = () => {
                                 </div>
                                 {expandedCreditor === item.name && (
                                     <div className="mt-3 pt-3 border-t border-green-100 text-sm space-y-2 animate-enter">
-                                        {filteredRecords.map(r => {
-                                             if (r.payer === item.name) {
-                                                 const unpaid = r.participants.filter(p => !p.paid && p.name !== item.name);
-                                                 if (unpaid.length > 0) {
-                                                     return (
-                                                         <div key={r.id} className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded px-1">
-                                                             <div className="flex-1 pr-2">
-                                                                 <div className="font-medium text-gray-700">{r.title}</div>
-                                                                 <div className="text-[10px] text-gray-400">{formatShortDate(r.date)}</div>
-                                                                 <div className="text-[11px] text-red-500 font-medium mt-0.5">Chưa trả: {unpaid.map(p => p.name).join(', ')}</div>
+                                            {filteredRecords.map(r => {
+                                                if (r.payer === item.name) {
+                                                    const unpaid = r.participants.filter(p => !p.paid && p.name !== item.name);
+                                                    if (unpaid.length > 0) {
+                                                        return (
+                                                             <div key={r.id} className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded px-1">
+                                                                 <div className="flex-1 pr-2">
+                                                                     <div className="font-medium text-gray-700">{r.title}</div>
+                                                                     <div className="text-[10px] text-gray-400">{formatShortDate(r.date)}</div>
+                                                                     <div className="text-[11px] text-red-500 font-medium mt-0.5">Chưa trả: {unpaid.map(p => p.name).join(', ')}</div>
+                                                                 </div>
+                                                                 <div className="font-medium text-green-600 text-right whitespace-nowrap">
+                                                                    <div>+{formatCurrency(r.perPersonAmount * unpaid.length)}</div>
+                                                                 </div>
                                                              </div>
-                                                             <div className="font-medium text-green-600 text-right whitespace-nowrap">
-                                                                <div>+{formatCurrency(r.perPersonAmount * unpaid.length)}</div>
-                                                             </div>
-                                                         </div>
-                                                     )
-                                                 }
-                                             }
-                                             return null;
-                                        })}
+                                                        )
+                                                    }
+                                                }
+                                                return null;
+                                            })}
                                     </div>
                                 )}
                             </div>
@@ -804,58 +709,58 @@ const App = () => {
                                 </div>
                                 {expandedPerson === item.name && (
                                     <div className="mt-4 space-y-4 animate-enter">
-                                        <div className="bg-red-50 rounded p-2 text-sm border border-red-100">
-                                            <div className="flex justify-between items-center mb-2 pb-2 border-b border-red-200">
-                                                <span className="text-[10px] font-bold text-red-800 uppercase">Chưa trả</span>
-                                                <button 
-                                                    onClick={() => dispatch({type: 'MARK_ALL_PAID', payload: {personName: item.name}})}
-                                                    className="text-[10px] bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 uppercase font-bold"
-                                                >
-                                                    Trả hết ngay
-                                                </button>
+                                            <div className="bg-red-50 rounded p-2 text-sm border border-red-100">
+                                                <div className="flex justify-between items-center mb-2 pb-2 border-b border-red-200">
+                                                    <span className="text-[10px] font-bold text-red-800 uppercase">Chưa trả</span>
+                                                    <button 
+                                                        onClick={() => handleMarkAllPaid(item.name)}
+                                                        className="text-[10px] bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 uppercase font-bold"
+                                                    >
+                                                        Trả hết ngay
+                                                    </button>
+                                                </div>
+                                                {filteredRecords.map(r => {
+                                                    const p = r.participants.find(part => part.name === item.name);
+                                                    if (p && !p.paid && r.payer !== item.name) {
+                                                        return (
+                                                            <div key={r.id} className="flex justify-between items-center py-2 border-b border-red-100/50 last:border-0 hover:bg-white rounded px-1 transition-colors">
+                                                                <div className="flex-1 pr-2">
+                                                                    <div className="font-medium text-gray-800">{r.title}</div>
+                                                                    <div className="text-[10px] text-gray-500">{formatShortDate(r.date)} • Ứng: <b>{r.payer}</b></div>
+                                                                </div>
+                                                                <div className="flex items-center gap-3">
+                                                                    <span className="font-bold text-red-600 whitespace-nowrap">{formatCurrency(r.perPersonAmount)}</span>
+                                                                    <input type="checkbox" className="w-5 h-5 accent-blue-600 cursor-pointer" onChange={() => handleTogglePaid(r, item.name)}/>
+                                                                </div>
+                                                            </div>
+                                                        )
+                                                    }
+                                                    return null;
+                                                })}
                                             </div>
-                                            {filteredRecords.map(r => {
-                                                const p = r.participants.find(part => part.name === item.name);
-                                                if (p && !p.paid && r.payer !== item.name) {
-                                                    return (
-                                                        <div key={r.id} className="flex justify-between items-center py-2 border-b border-red-100/50 last:border-0 hover:bg-white rounded px-1 transition-colors">
-                                                            <div className="flex-1 pr-2">
-                                                                <div className="font-medium text-gray-800">{r.title}</div>
-                                                                <div className="text-[10px] text-gray-500">{formatShortDate(r.date)} • Ứng: <b>{r.payer}</b></div>
+                                            
+                                            {/* PAID HISTORY */}
+                                            <div className="bg-gray-50 rounded p-2 text-sm border border-gray-200">
+                                                <div className="text-[10px] font-bold text-gray-500 uppercase mb-2 border-b pb-1">Lịch sử đã trả</div>
+                                                {filteredRecords.map(r => {
+                                                    const p = r.participants.find(part => part.name === item.name);
+                                                    if (p && p.paid && r.payer !== item.name) {
+                                                        return (
+                                                            <div key={r.id} className="flex justify-between items-center py-1.5 opacity-70 hover:opacity-100 border-b border-gray-100 last:border-0">
+                                                                <div className="flex-1 pr-2">
+                                                                    <div className="font-medium text-gray-600 line-through decoration-gray-400">{r.title}</div>
+                                                                    <div className="text-[9px] text-blue-600">Đã trả: {p.paidAt ? formatDateTime(p.paidAt) : '---'}</div>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-gray-500 text-xs line-through whitespace-nowrap">{formatCurrency(r.perPersonAmount)}</span>
+                                                                    <input type="checkbox" checked={true} className="w-4 h-4 accent-gray-400 cursor-pointer" onChange={() => handleTogglePaid(r, item.name)}/>
+                                                                </div>
                                                             </div>
-                                                            <div className="flex items-center gap-3">
-                                                                <span className="font-bold text-red-600 whitespace-nowrap">{formatCurrency(r.perPersonAmount)}</span>
-                                                                <input type="checkbox" className="w-5 h-5 accent-blue-600 cursor-pointer" onChange={() => dispatch({type: 'TOGGLE_PAID', payload: {recordId: r.id, personName: item.name}})}/>
-                                                            </div>
-                                                        </div>
-                                                    )
-                                                }
-                                                return null;
-                                            })}
-                                        </div>
-                                        
-                                        {/* PAID HISTORY */}
-                                        <div className="bg-gray-50 rounded p-2 text-sm border border-gray-200">
-                                            <div className="text-[10px] font-bold text-gray-500 uppercase mb-2 border-b pb-1">Lịch sử đã trả</div>
-                                            {filteredRecords.map(r => {
-                                                const p = r.participants.find(part => part.name === item.name);
-                                                if (p && p.paid && r.payer !== item.name) {
-                                                    return (
-                                                        <div key={r.id} className="flex justify-between items-center py-1.5 opacity-70 hover:opacity-100 border-b border-gray-100 last:border-0">
-                                                            <div className="flex-1 pr-2">
-                                                                <div className="font-medium text-gray-600 line-through decoration-gray-400">{r.title}</div>
-                                                                <div className="text-[9px] text-blue-600">Đã trả: {p.paidAt ? formatDateTime(p.paidAt) : '---'}</div>
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-gray-500 text-xs line-through whitespace-nowrap">{formatCurrency(r.perPersonAmount)}</span>
-                                                                <input type="checkbox" checked={true} className="w-4 h-4 accent-gray-400 cursor-pointer" onChange={() => dispatch({type: 'TOGGLE_PAID', payload: {recordId: r.id, personName: item.name}})}/>
-                                                            </div>
-                                                        </div>
-                                                    )
-                                                }
-                                                return null;
-                                            })}
-                                        </div>
+                                                        )
+                                                    }
+                                                    return null;
+                                                })}
+                                            </div>
                                     </div>
                                 )}
                             </div>
@@ -864,7 +769,7 @@ const App = () => {
                 </AnimatedCard>
              </div>
 
-             {/* SECTION 2: TIMELINE (HISTORY) */}
+             {/* TIMELINE */}
              <div className="mt-8 pt-8 border-t-2 border-dashed border-gray-200">
                  <div className="flex flex-col md:flex-row justify-between items-center mb-6">
                      <h3 className="font-bold text-lg text-gray-700 flex items-center gap-2"><History className="w-6 h-6 text-blue-600"/> Nhật Ký Giao Dịch</h3>
@@ -878,7 +783,6 @@ const App = () => {
 
                  {sortedHistoryDates.length === 0 ? (
                      <div className="text-center py-12 text-gray-400 bg-white rounded-xl border-2 border-dashed border-gray-200">
-                         <Calendar className="w-12 h-12 mx-auto mb-2 opacity-20"/>
                          Không có dữ liệu.
                      </div>
                  ) : (
@@ -926,7 +830,7 @@ const App = () => {
                                                  <button onClick={() => setEditingRecord(record)} className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-xs font-bold bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded transition-colors">
                                                      <Edit3 className="w-3 h-3"/> Sửa
                                                  </button>
-                                                 <button onClick={() => { if(confirm('Xóa giao dịch này?')) dispatch({type: 'DELETE_RECORD', payload: record.id}) }} className="flex items-center gap-1 text-red-600 hover:text-red-800 text-xs font-bold bg-red-50 hover:bg-red-100 px-3 py-2 rounded transition-colors">
+                                                 <button onClick={() => handleDeleteRecord(record.id)} className="flex items-center gap-1 text-red-600 hover:text-red-800 text-xs font-bold bg-red-50 hover:bg-red-100 px-3 py-2 rounded transition-colors">
                                                      <Trash2 className="w-3 h-3"/> Xóa
                                                  </button>
                                              </div>
@@ -941,7 +845,7 @@ const App = () => {
           </div>
         )}
 
-        {/* TAB 4: REPORT */}
+        {/* TAB 3: REPORT */}
         {activeTab === 'report' && (
           <div className="space-y-6 animate-enter">
              <AnimatedCard className="p-4 flex flex-col md:flex-row items-end gap-4">
@@ -1068,7 +972,7 @@ const App = () => {
           </div>
         )}
 
-        {/* TAB 5: PEOPLE */}
+        {/* TAB 4: PEOPLE */}
         {activeTab === 'people' && (
           <div className="animate-enter max-w-3xl mx-auto">
              <AnimatedCard className="p-4 sm:p-6">
@@ -1077,25 +981,12 @@ const App = () => {
                         <Users className="w-6 h-6" /> Danh Sách Thành Viên
                     </h3>
                     <div className="relative w-full sm:w-auto">
-                        <button 
-                            onClick={() => setShowSampleOptions(!showSampleOptions)}
+                         <button 
+                            onClick={handleLoadSample}
                             className="text-xs bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-4 py-2 rounded-lg flex items-center justify-center gap-1 font-bold transition-all shadow-sm hover:shadow w-full sm:w-auto"
-                        >
-                            <Database className="w-3 h-3" /> Dữ liệu mẫu
-                        </button>
-                        {showSampleOptions && (
-                            <div className="absolute right-0 mt-2 w-full sm:w-52 bg-white border rounded-xl shadow-2xl z-50 overflow-hidden animate-in zoom-in-95 duration-200">
-                                <button onClick={() => { dispatch({type: 'LOAD_SAMPLE_DATA', payload: 'people_only'}); setShowSampleOptions(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b">
-                                    Chỉ nạp tên thành viên
-                                </button>
-                                <button onClick={() => { dispatch({type: 'LOAD_SAMPLE_DATA', payload: 'full'}); setShowSampleOptions(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b">
-                                    Nạp dữ liệu test đầy đủ
-                                </button>
-                                <button onClick={() => { if(confirm('Xóa sạch mọi dữ liệu?')) { dispatch({type: 'CLEAR_DATA'}); setShowSampleOptions(false); }}} className="w-full text-left px-4 py-3 text-sm hover:bg-red-50 text-red-600 font-medium">
-                                    <Trash2 className="w-3 h-3 inline mr-1"/> Xóa sạch dữ liệu
-                                </button>
-                            </div>
-                        )}
+                         >
+                            <Database className="w-3 h-3" /> Nạp người mẫu
+                         </button>
                     </div>
                 </div>
                 
@@ -1132,13 +1023,19 @@ const App = () => {
                                     </div>
                                     {person}
                                 </span>
-                                <button onClick={() => dispatch({type: 'REMOVE_PERSON', payload: person})} className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-all opacity-0 group-hover:opacity-100">
+                                <button onClick={() => handleRemovePerson(person)} className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-all opacity-0 group-hover:opacity-100">
                                     <Trash2 className="w-4 h-4" />
                                 </button>
                             </div>
                         ))}
                     </div>
                 )}
+                
+                <div className="mt-8 pt-4 border-t text-center">
+                    <button onClick={handleClearData} className="text-red-500 text-xs underline opacity-50 hover:opacity-100">
+                        Xóa sạch toàn bộ dữ liệu (Nguy hiểm)
+                    </button>
+                </div>
              </AnimatedCard>
           </div>
         )}
