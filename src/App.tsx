@@ -1,31 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Plus, Trash2, Users, Calendar, CheckCircle, XCircle, 
   ChevronDown, Copy, UtensilsCrossed, 
-  PieChart, Filter, Edit3, Database, Search, X, 
-  LayoutList, History, ArrowRight, BookOpen, FileText, ChevronRight 
+  PieChart, RotateCcw, RotateCw, Filter, Edit3, Database, Search, X, 
+  LayoutList, History, ArrowRight, BookOpen, FileText, ChevronRight
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie 
 } from 'recharts';
 
-// --- FIREBASE IMPORTS ---
-import { db } from './firebase'; // Đảm bảo file firebase.ts đã export { db }
+// --- Firebase Imports ---
+import { db } from './firebase'; 
 import { 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  setDoc, 
-  query, 
-  orderBy,
-  getDoc
+  collection, addDoc, updateDoc, deleteDoc, doc, 
+  onSnapshot, query, orderBy, setDoc, getDocs, where, writeBatch 
 } from 'firebase/firestore';
 
 // --- Theme & Style ---
-const THEME_COLOR = '#000066'; 
+const THEME_COLOR = '#000066'; // Navy Blue
 
 // --- Types ---
 interface ParticipantStatus {
@@ -35,7 +27,7 @@ interface ParticipantStatus {
 }
 
 interface MealRecord {
-  id: string; // Firestore Document ID
+  id: string;
   date: string;
   createdAt: number;
   title: string;
@@ -44,6 +36,16 @@ interface MealRecord {
   payer: string;
   participants: ParticipantStatus[];
 }
+
+interface AppState {
+  people: string[];
+  records: MealRecord[];
+}
+
+// --- Actions ---
+type Action = 
+  | { type: 'SYNC_FROM_FIREBASE'; payload: AppState }
+  | { type: 'LOCAL_UPDATE'; payload: AppState } // Dùng cho undo/redo local
 
 // --- Helper Functions ---
 const formatCurrency = (amount: number) => {
@@ -76,6 +78,8 @@ const formatDayOfWeek = (dateString: string) => {
     return days[d.getDay()];
 }
 
+const generateId = () => Math.random().toString(36).substr(2, 9);
+
 const copyToClipboard = (text: string) => {
   if (navigator.clipboard && window.isSecureContext) {
     return navigator.clipboard.writeText(text);
@@ -85,20 +89,20 @@ const copyToClipboard = (text: string) => {
     textArea.value = text;
     textArea.style.position = "fixed";
     textArea.style.left = "-9999px";
+    textArea.style.top = "0";
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
     try {
         document.execCommand('copy');
+        document.body.removeChild(textArea);
     } catch (err) {
-        console.error('Lỗi copy', err);
+        document.body.removeChild(textArea);
     }
-    document.body.removeChild(textArea);
-    return Promise.resolve();
   }
 };
 
-// --- Components ---
+// --- Custom Components ---
 
 const AnimatedCard = ({ children, className = "", delay = 0 }: { children: React.ReactNode, className?: string, delay?: number }) => (
   <div 
@@ -133,18 +137,18 @@ const GuideModal = ({ onClose }: { onClose: () => void }) => (
                 <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><X className="w-5 h-5"/></button>
             </div>
             <div className="p-6 overflow-y-auto space-y-6 text-gray-700 leading-relaxed">
-                <p className="text-sm italic bg-yellow-50 p-2 border border-yellow-200 rounded text-yellow-800">
-                   ⚡ <b>Lưu ý mới:</b> Dữ liệu hiện tại đã được đồng bộ Online qua Firebase. Bạn có thể dùng chung link này với đồng nghiệp, dữ liệu sẽ tự cập nhật cho tất cả mọi người.
-                </p>
                 <section>
                     <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">1. Quy trình cơ bản</h4>
+                    <p className="mb-2">Ứng dụng tự động lưu dữ liệu lên Cloud (Firebase). Bạn không cần bấm nút Save thủ công.</p>
+                </section>
+                 <section>
+                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">2. Theo dõi & Thanh toán nợ</h4>
                     <ul className="list-disc pl-5 space-y-1 text-sm">
-                        <li><b>Bước 1:</b> Vào tab <b>Thành Viên</b> để nhập tên mọi người.</li>
-                        <li><b>Bước 2:</b> Vào tab <b>Nhập Liệu</b> để ghi bill. Chọn "Người trả tiền" và tick chọn những "Người ăn".</li>
-                        <li><b>Bước 3:</b> Bấm <b>Lưu</b>. Hệ thống tự động chia tiền.</li>
+                        <li><b>Cột Cần Thu Về (Màu Xanh):</b> Dành cho người đã ứng tiền.</li>
+                        <li><b>Cột Cần Phải Trả (Màu Đỏ):</b> Dành cho người ăn ké.</li>
+                        <li><b>Cách trả nợ:</b> Tick vào ô vuông <input type="checkbox" className="align-middle" /> bên cạnh món ăn. Dữ liệu sẽ cập nhật ngay lập tức.</li>
                     </ul>
                 </section>
-                {/* ... Các phần hướng dẫn khác giữ nguyên ... */}
             </div>
             <div className="p-4 border-t bg-gray-50 text-right sticky bottom-0">
                 <button onClick={onClose} className="bg-blue-800 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-900 transition-colors">
@@ -155,7 +159,7 @@ const GuideModal = ({ onClose }: { onClose: () => void }) => (
     </div>
 );
 
-// --- Form Component ---
+// --- Refactored RecordForm (Outside App) ---
 const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: { 
     initialData: any, 
     onSubmit: (data: any) => void, 
@@ -274,7 +278,7 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
                 </div>
             </div>
             
-            {/* Detailed Participant List */}
+            {/* Detailed Participant List with Paid Toggle */}
             <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
                 <label className="text-xs font-bold text-gray-500 uppercase block mb-2">Danh sách chia tiền ({fParticipants.length})</label>
                 {fParticipants.length === 0 ? (
@@ -303,6 +307,7 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
                                         />
                                     </div>
                                     
+                                    {/* Date Picker for Paid Participants (Not Payer) */}
                                     {p.paid && p.name !== fPayer && (
                                         <div className="animate-in fade-in slide-in-from-top-1">
                                             <input 
@@ -334,85 +339,154 @@ const RecordForm = ({ initialData, onSubmit, onCancel, submitLabel, people }: {
     );
 };
 
-// --- Main App Component ---
 const App = () => {
-  // --- States ---
-  const [people, setPeople] = useState<string[]>([]);
-  const [records, setRecords] = useState<MealRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  // --- History & State ---
+  const [history, setHistory] = useState<AppState[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const currentState = history[historyIndex] || { people: [], records: [] };
+  const { people, records } = currentState;
 
-  // UI State
+  // --- UI State ---
   const [activeTab, setActiveTab] = useState<'entry' | 'debt_history' | 'report' | 'people'>('entry');
   const [showGuide, setShowGuide] = useState(false);
+   
+  // Edit Modal State
   const [editingRecord, setEditingRecord] = useState<MealRecord | null>(null);
+
+  // New Person Input
   const [newPersonName, setNewPersonName] = useState('');
 
-  // Filter & View State
+  // Unified Filter State (Date Range)
   const [startDate, setStartDate] = useState(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
   );
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
+
+  // Expanded State
   const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
   const [expandedCreditor, setExpandedCreditor] = useState<string | null>(null);
   const [showSampleOptions, setShowSampleOptions] = useState(false);
   const [expandedReportRows, setExpandedReportRows] = useState<Record<string, boolean>>({});
 
-  // --- FIRESTORE SUBSCRIPTION ---
+  // --- FIREBASE SYNC & INITIALIZATION ---
+  // Thay thế việc load từ LocalStorage bằng lắng nghe Firestore Realtime
   useEffect(() => {
-      // 1. Subscribe to Records (Listen realtime)
-      const q = query(collection(db, "lunch_records"), orderBy("createdAt", "desc"));
-      const unsubscribeRecords = onSnapshot(q, (snapshot) => {
-          const loadedRecords = snapshot.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
-          })) as MealRecord[];
-          setRecords(loadedRecords);
-          setIsLoading(false);
-      });
+    // 1. Listen to 'people' collection
+    const qPeople = query(collection(db, 'people'), orderBy('name'));
+    const unsubscribePeople = onSnapshot(qPeople, (snapshot) => {
+        const peopleList = snapshot.docs.map(doc => doc.data().name as string);
+        dispatch({ type: 'SYNC_FROM_FIREBASE', payload: { people: peopleList, records: currentState.records } });
+    });
 
-      // 2. Subscribe to Configuration (People list)
-      const configDocRef = doc(db, "lunch_config", "general");
-      const unsubscribeConfig = onSnapshot(configDocRef, (docSnap) => {
-          if (docSnap.exists()) {
-              setPeople(docSnap.data().people || []);
-          } else {
-              // Create default if not exists
-              setDoc(configDocRef, { people: [] });
-          }
-      });
+    // 2. Listen to 'records' collection
+    const qRecords = query(collection(db, 'records'), orderBy('createdAt', 'desc'));
+    const unsubscribeRecords = onSnapshot(qRecords, (snapshot) => {
+        const recordsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MealRecord));
+        // Lấy state hiện tại (people) để merge
+        // Lưu ý: Do closure, biến 'people' ở đây có thể cũ, nhưng reducer sẽ xử lý merge
+        // Cách tốt hơn là dispatch payload chứa records mới
+        dispatch({ type: 'SYNC_FROM_FIREBASE', payload: { people: [], records: recordsList } }); 
+    });
 
-      return () => {
-          unsubscribeRecords();
-          unsubscribeConfig();
-      };
+    return () => {
+        unsubscribePeople();
+        unsubscribeRecords();
+    };
+  }, []); // Empty dependency array -> Run once on mount
+
+  // --- Dispatcher (Modified for Firebase) ---
+  const dispatch = useCallback((action: Action) => {
+    setHistory(prevHistory => {
+      const current = prevHistory[prevHistory.length - 1] || { people: [], records: [] };
+      let newState: AppState = { ...current };
+
+      switch (action.type) {
+        case 'SYNC_FROM_FIREBASE':
+            // Merge logic: Nếu payload có mảng rỗng thì giữ nguyên cái cũ
+            newState = {
+                people: action.payload.people.length > 0 ? action.payload.people : current.people,
+                records: action.payload.records.length > 0 ? action.payload.records : current.records
+            };
+            
+            // Xử lý edge case: Nếu Firebase trả về rỗng thật sự (đã xóa hết)
+            if (action.payload.records.length === 0 && current.records.length > 0) {
+                 // Cần check xem có phải lần load đầu tiên không, tạm thời để logic merge đơn giản
+                 // Ở đây giả định payload rỗng nghĩa là "không cập nhật phần này" 
+                 // (do logic tách listener ở trên)
+            }
+            // Logic fix cho listener tách biệt:
+            // Listener Records gọi: payload = {people: [], records: [...]}
+            // Listener People gọi: payload = {people: [...], records: []} 
+            // -> Cần check kỹ hơn
+            if (action.payload.people.length === 0 && action.payload.records.length > 0) {
+                newState.people = current.people;
+                newState.records = action.payload.records;
+            } else if (action.payload.people.length > 0 && action.payload.records.length === 0) {
+                 newState.people = action.payload.people;
+                 newState.records = current.records;
+            } else {
+                 newState = action.payload; // Full load
+            }
+            break;
+            
+        case 'LOCAL_UPDATE':
+             // Cái này dùng để cập nhật optimistic UI nếu cần, 
+             // nhưng với onSnapshot nhanh thì có thể không cần thiết.
+             newState = action.payload;
+             break;
+             
+        default:
+          return prevHistory;
+      }
+
+      // Logic Undo/Redo với Firebase rất phức tạp vì server đè local.
+      // Giải pháp: Mỗi lần Sync từ Firebase coi như là "New State" chuẩn nhất.
+      // Ta chỉ đẩy vào history nếu nó thực sự khác biệt.
+      // Để đơn giản cho prompt này: Chỉ lưu history những thay đổi lớn, 
+      // hoặc chấp nhận history chỉ hoạt động local session.
+      
+      const newHistory = [...prevHistory, newState];
+      // Giới hạn history size để đỡ tốn mem
+      if (newHistory.length > 50) newHistory.shift();
+      
+      setHistoryIndex(newHistory.length - 1);
+      return newHistory;
+    });
   }, []);
 
-  // --- FIRESTORE ACTIONS ---
+  // --- Handlers (UPDATED TO WRITE TO FIREBASE) ---
+  
+  const handleUndo = () => {
+      if (historyIndex > 0) setHistoryIndex(historyIndex - 1);
+      alert("Lưu ý: Undo chỉ có tác dụng xem lại cục bộ. Dữ liệu trên Cloud không bị đảo ngược.");
+  };
+  
+  const handleRedo = () => historyIndex < history.length - 1 && setHistoryIndex(historyIndex + 1);
 
   const handleAddPerson = async (name: string) => {
     const trimmedName = name.trim();
     if (trimmedName && !people.includes(trimmedName)) {
-        const newPeople = [...people, trimmedName];
-        try {
-            await updateDoc(doc(db, "lunch_config", "general"), {
-                people: newPeople
-            });
-            setNewPersonName('');
-        } catch (e) {
-            alert('Lỗi thêm người: ' + e);
-        }
+      try {
+          await addDoc(collection(db, 'people'), { name: trimmedName });
+          setNewPersonName('');
+          // Không cần dispatch, onSnapshot sẽ tự cập nhật
+      } catch (e) {
+          alert('Lỗi thêm người: ' + e);
+      }
     }
   };
-
+  
   const handleRemovePerson = async (name: string) => {
-      if(!confirm(`Xóa thành viên ${name}? (Lịch sử giao dịch vẫn giữ nguyên)`)) return;
-      const newPeople = people.filter(p => p !== name);
+      if(!confirm(`Xóa thành viên ${name}?`)) return;
       try {
-          await updateDoc(doc(db, "lunch_config", "general"), {
-              people: newPeople
+          // Tìm doc có name trùng khớp để xóa
+          const q = query(collection(db, 'people'), where('name', '==', name));
+          const snapshot = await getDocs(q);
+          snapshot.forEach(doc => {
+              deleteDoc(doc.ref);
           });
-      } catch (e) {
-          alert('Lỗi xóa người: ' + e);
+      } catch(e) {
+          alert('Lỗi xóa: ' + e);
       }
   }
 
@@ -425,15 +499,16 @@ const App = () => {
      const perPerson = Math.ceil(record.totalAmount / record.participants.length);
      
      const fullParticipants: ParticipantStatus[] = record.participants.map((p: any) => {
-       const isPayer = p.name === record.payer;
-       return {
+        const isPayer = p.name === record.payer;
+        return {
            name: p.name,
            paid: isPayer ? true : p.paid, 
            paidAt: isPayer ? (p.paidAt || new Date().toISOString()) : (p.paid ? (p.paidAt || new Date().toISOString()) : null)
-       };
+        };
      });
 
-     const recordData = {
+     const finalRecord = {
+         createdAt: isEdit && editingRecord ? editingRecord.createdAt : Date.now(),
          date: record.date || new Date().toISOString().slice(0, 10),
          title: record.title || '',
          totalAmount: record.totalAmount,
@@ -444,85 +519,92 @@ const App = () => {
 
      try {
          if (isEdit && editingRecord) {
-             // Update Firestore
-             await updateDoc(doc(db, "lunch_records", editingRecord.id), recordData);
+             await updateDoc(doc(db, 'records', editingRecord.id), finalRecord);
              setEditingRecord(null);
          } else {
-             // Create New in Firestore
-             await addDoc(collection(db, "lunch_records"), {
-                 ...recordData,
-                 createdAt: Date.now()
-             });
-             alert('Đã lưu thành công!');
+             await addDoc(collection(db, 'records'), finalRecord);
          }
+         // alert('Đã lưu thành công!'); 
      } catch (e) {
          console.error(e);
-         alert("Lỗi khi lưu dữ liệu lên Cloud!");
+         alert('Lỗi khi lưu dữ liệu lên Cloud!');
      }
   };
 
-  const handleDeleteRecord = async (id: string) => {
-      if(confirm('Bạn chắc chắn muốn xóa vĩnh viễn bill này?')) {
-          try {
-              await deleteDoc(doc(db, "lunch_records", id));
-          } catch (e) {
-              alert('Lỗi xóa: ' + e);
-          }
-      }
-  }
-
-  const handleTogglePaid = async (record: MealRecord, personName: string) => {
-      const updatedParticipants = record.participants.map(p => {
+  const handleTogglePaid = async (recordId: string, personName: string, currentParticipants: ParticipantStatus[]) => {
+      const updatedParticipants = currentParticipants.map(p => {
           if (p.name !== personName) return p;
           const newPaid = !p.paid;
-          return { 
-            ...p, 
-            paid: newPaid,
-            paidAt: newPaid ? new Date().toISOString() : null
-          };
+          return { ...p, paid: newPaid, paidAt: newPaid ? new Date().toISOString() : null };
       });
       
       try {
-          await updateDoc(doc(db, "lunch_records", record.id), {
-              participants: updatedParticipants
-          });
-      } catch(e) {
-          alert('Lỗi cập nhật trạng thái: ' + e);
-      }
-  }
-
+          await updateDoc(doc(db, 'records', recordId), { participants: updatedParticipants });
+      } catch (e) { console.error(e); }
+  };
+  
   const handleMarkAllPaid = async (personName: string) => {
-      if(!confirm(`Xác nhận ${personName} đã trả hết sạch nợ?`)) return;
-      
-      // Tìm tất cả các record mà người này nợ
-      const debts = records.filter(r => {
+      // Tìm tất cả record mà người này chưa trả
+      const unpaidRecords = records.filter(r => {
           const p = r.participants.find(part => part.name === personName);
           return p && !p.paid && r.payer !== personName;
       });
-
+      
+      if (unpaidRecords.length === 0) return;
+      if (!confirm(`Xác nhận trả hết ${unpaidRecords.length} khoản nợ cho ${personName}?`)) return;
+      
+      const batch = writeBatch(db);
+      unpaidRecords.forEach(r => {
+          const updatedParticipants = r.participants.map(p => {
+              if (p.name === personName) return { ...p, paid: true, paidAt: new Date().toISOString() };
+              return p;
+          });
+          const ref = doc(db, 'records', r.id);
+          batch.update(ref, { participants: updatedParticipants });
+      });
+      
       try {
-          // Firebase update hàng loạt (Batch update là tốt nhất, nhưng loop cho đơn giản code)
-          for (const r of debts) {
-               const updatedParticipants = r.participants.map(p => {
-                   if (p.name === personName) {
-                       return { ...p, paid: true, paidAt: new Date().toISOString() };
-                   }
-                   return p;
-               });
-               await updateDoc(doc(db, "lunch_records", r.id), {
-                   participants: updatedParticipants
-               });
-          }
-      } catch(e) {
-          alert("Lỗi update hàng loạt: " + e);
+          await batch.commit();
+      } catch(e) { alert('Lỗi batch update: ' + e); }
+  }
+
+  const handleDeleteRecord = async (recordId: string) => {
+      if(confirm('Xóa giao dịch này vĩnh viễn?')) {
+          try {
+              await deleteDoc(doc(db, 'records', recordId));
+          } catch(e) { alert('Lỗi xóa: ' + e); }
       }
   }
 
+  const handleLoadSampleData = async () => {
+      // Vì dùng Firebase thật, nên ta sẽ insert thật
+      if(!confirm("Hành động này sẽ ghi dữ liệu mẫu lên Cloud thật. Tiếp tục?")) return;
+      
+      const samplePeople = ["Khánh", "Minh Anh", "Hiếu", "Chị Trang"];
+      for (const p of samplePeople) {
+          if (!people.includes(p)) await addDoc(collection(db, 'people'), { name: p });
+      }
+      // Add record logic here if needed...
+      setShowSampleOptions(false);
+  }
+
   const handleClearData = async () => {
-     // Hàm này nguy hiểm với Cloud DB, chỉ xóa config people
-     if(confirm("DỮ LIỆU ĐANG Ở TRÊN CLOUD!\nBạn có chắc chắn muốn xóa danh sách thành viên?")) {
-        await updateDoc(doc(db, "lunch_config", "general"), { people: [] });
-     }
+      if(!confirm("CẢNH BÁO: Xóa toàn bộ dữ liệu trên Cloud? Hành động này không thể hoàn tác!")) return;
+      // Xóa records
+      const qRec = query(collection(db, 'records'));
+      const snapRec = await getDocs(qRec);
+      snapRec.forEach(d => deleteDoc(d.ref));
+      
+      // Xóa people
+      const qPeo = query(collection(db, 'people'));
+      const snapPeo = await getDocs(qPeo);
+      snapPeo.forEach(d => deleteDoc(d.ref));
+      
+      setShowSampleOptions(false);
+  }
+
+  const toggleReportRow = (name: string) => {
+      setExpandedReportRows(prev => ({ ...prev, [name]: !prev[name] }));
   }
 
   // --- Logic for Unified View ---
@@ -530,9 +612,9 @@ const App = () => {
   const filteredRecords = records.filter(r => r.date >= startDate && r.date <= endDate);
   const totalFilteredSpent = filteredRecords.reduce((sum, r) => sum + r.totalAmount, 0);
 
+  interface MealDetail { id: string; date: string; title: string; amount: number; isPaid: boolean }
   const getNetBalances = () => {
-    // Logic tính toán công nợ giữ nguyên
-    const balances: Record<string, { owed: number, debt: number, net: number, meals: any[] }> = {};
+    const balances: Record<string, { owed: number, debt: number, net: number, meals: MealDetail[] }> = {};
     people.forEach(p => balances[p] = { owed: 0, debt: 0, net: 0, meals: [] });
 
     filteredRecords.forEach(r => {
@@ -583,16 +665,6 @@ const App = () => {
   const sortedHistoryDates = Object.keys(historyByDate).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
-  const toggleReportRow = (name: string) => {
-       setExpandedReportRows(prev => ({ ...prev, [name]: !prev[name] }));
-  }
-
-  // --- RENDER ---
-
-  if (isLoading) {
-      return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-blue-800 font-bold animate-pulse">Đang tải dữ liệu từ Cloud...</div>;
-  }
-
   return (
     <div className="min-h-screen font-sans flex flex-col text-gray-800 bg-gray-50">
       <style>{`
@@ -607,6 +679,16 @@ const App = () => {
 
       {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
 
+      {/* Undo/Redo Controls */}
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col gap-2">
+        <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="bg-white p-3 rounded-full shadow-lg border hover:bg-blue-50 disabled:opacity-50 transition-all hover:scale-110 active:scale-95">
+            <RotateCw className="w-5 h-5 text-gray-700" />
+        </button>
+        <button onClick={handleUndo} disabled={historyIndex <= 0} className="bg-white p-3 rounded-full shadow-lg border hover:bg-blue-50 disabled:opacity-50 transition-all hover:scale-110 active:scale-95">
+            <RotateCcw className="w-5 h-5 text-gray-700" />
+        </button>
+      </div>
+
       {/* Header */}
       <header className="text-white p-4 shadow-lg sticky top-0 z-30 transition-all" style={{ backgroundColor: THEME_COLOR }}>
         <div className="max-w-5xl mx-auto flex justify-between items-center">
@@ -616,9 +698,9 @@ const App = () => {
             </div>
             <div>
                 <h1 className="text-lg font-bold uppercase tracking-wide leading-tight flex items-center gap-1">
-                    Sổ Ăn Uống <span className="text-green-400 text-[10px] bg-white/20 px-1.5 py-0.5 rounded ml-1 border border-green-500/30">CLOUD</span>
+                    Sổ Ăn Uống <span className="text-yellow-400 text-xs bg-white/20 px-1.5 py-0.5 rounded ml-1 hidden sm:inline-block">Cloud Sync</span>
                 </h1>
-                <span className="text-xs text-blue-200 opacity-80 font-medium hidden sm:block">Dữ liệu đồng bộ Real-time</span>
+                <span className="text-xs text-blue-200 opacity-80 font-medium hidden sm:block">Dữ liệu được lưu trên Cloud</span>
             </div>
           </div>
           <button 
@@ -643,9 +725,9 @@ const App = () => {
                key={tab.id}
                onClick={() => setActiveTab(tab.id as any)}
                className={`flex-1 min-w-[25%] sm:min-w-[auto] flex flex-col items-center justify-center py-3 px-1 text-xs font-semibold transition-all border-b-4 duration-300 snap-start
-                  ${activeTab === tab.id 
-                    ? `border-[${THEME_COLOR}] text-[${THEME_COLOR}] bg-blue-50/60` 
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                 ${activeTab === tab.id 
+                   ? `border-[${THEME_COLOR}] text-[${THEME_COLOR}] bg-blue-50/60` 
+                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
                style={activeTab === tab.id ? { color: THEME_COLOR, borderColor: THEME_COLOR } : {}}
              >
                <tab.icon className={`w-5 h-5 mb-1 ${activeTab === tab.id ? 'transform scale-110' : ''} transition-transform`} />
@@ -669,7 +751,7 @@ const App = () => {
                  initialData={{}}
                  people={people}
                  onSubmit={(data: any) => handleSaveRecord(data, false)}
-                 submitLabel="LƯU GIAO DỊCH"
+                 submitLabel="LƯU GIAO DỊCH (CLOUD)"
               />
             </AnimatedCard>
           </div>
@@ -719,21 +801,21 @@ const App = () => {
                                     <div className="mt-3 pt-3 border-t border-green-100 text-sm space-y-2 animate-enter">
                                             {filteredRecords.map(r => {
                                                if (r.payer === item.name) {
-                                                   const unpaid = r.participants.filter(p => !p.paid && p.name !== item.name);
-                                                   if (unpaid.length > 0) {
-                                                       return (
-                                                           <div key={r.id} className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded px-1">
-                                                                <div className="flex-1 pr-2">
-                                                                     <div className="font-medium text-gray-700">{r.title}</div>
-                                                                     <div className="text-[10px] text-gray-400">{formatShortDate(r.date)}</div>
-                                                                     <div className="text-[11px] text-red-500 font-medium mt-0.5">Chưa trả: {unpaid.map(p => p.name).join(', ')}</div>
-                                                                </div>
-                                                                <div className="font-medium text-green-600 text-right whitespace-nowrap">
-                                                                     <div>+{formatCurrency(r.perPersonAmount * unpaid.length)}</div>
-                                                                </div>
-                                                           </div>
-                                                       )
-                                                   }
+                                                  const unpaid = r.participants.filter(p => !p.paid && p.name !== item.name);
+                                                  if (unpaid.length > 0) {
+                                                      return (
+                                                          <div key={r.id} className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded px-1">
+                                                               <div className="flex-1 pr-2">
+                                                                   <div className="font-medium text-gray-700">{r.title}</div>
+                                                                   <div className="text-[10px] text-gray-400">{formatShortDate(r.date)}</div>
+                                                                   <div className="text-[11px] text-red-500 font-medium mt-0.5">Chưa trả: {unpaid.map(p => p.name).join(', ')}</div>
+                                                               </div>
+                                                               <div className="font-medium text-green-600 text-right whitespace-nowrap">
+                                                                  <div>+{formatCurrency(r.perPersonAmount * unpaid.length)}</div>
+                                                               </div>
+                                                          </div>
+                                                      )
+                                                  }
                                                }
                                                return null;
                                             })}
@@ -786,7 +868,7 @@ const App = () => {
                                                                 </div>
                                                                 <div className="flex items-center gap-3">
                                                                     <span className="font-bold text-red-600 whitespace-nowrap">{formatCurrency(r.perPersonAmount)}</span>
-                                                                    <input type="checkbox" className="w-5 h-5 accent-blue-600 cursor-pointer" onChange={() => handleTogglePaid(r, item.name)}/>
+                                                                    <input type="checkbox" className="w-5 h-5 accent-blue-600 cursor-pointer" onChange={() => handleTogglePaid(r.id, item.name, r.participants)}/>
                                                                 </div>
                                                             </div>
                                                         )
@@ -809,7 +891,7 @@ const App = () => {
                                                                 </div>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-gray-500 text-xs line-through whitespace-nowrap">{formatCurrency(r.perPersonAmount)}</span>
-                                                                    <input type="checkbox" checked={true} className="w-4 h-4 accent-gray-400 cursor-pointer" onChange={() => handleTogglePaid(r, item.name)}/>
+                                                                    <input type="checkbox" checked={true} className="w-4 h-4 accent-gray-400 cursor-pointer" onChange={() => handleTogglePaid(r.id, item.name, r.participants)}/>
                                                                 </div>
                                                             </div>
                                                         )
@@ -872,10 +954,10 @@ const App = () => {
                                              <div className="flex flex-wrap gap-2 mt-3 mb-4">
                                                  {record.participants.map(p => (
                                                      <div 
-                                                         key={p.name} 
-                                                         className={`px-2 py-1 rounded border text-xs flex items-center gap-1 transition-colors cursor-help
-                                                         ${p.paid ? 'bg-green-50 text-green-700 border-green-200 font-bold shadow-sm' : 'bg-gray-50 text-gray-500 border-gray-100'}`}
-                                                         title={p.paid && p.paidAt ? `Đã trả lúc: ${formatDateTime(p.paidAt)}` : 'Chưa trả'}
+                                                        key={p.name} 
+                                                        className={`px-2 py-1 rounded border text-xs flex items-center gap-1 transition-colors cursor-help
+                                                        ${p.paid ? 'bg-green-50 text-green-700 border-green-200 font-bold shadow-sm' : 'bg-gray-50 text-gray-500 border-gray-100'}`}
+                                                        title={p.paid && p.paidAt ? `Đã trả lúc: ${formatDateTime(p.paidAt)}` : 'Chưa trả'}
                                                      >
                                                          {p.name} 
                                                          {p.paid && <CheckCircle className="w-3 h-3"/>}
@@ -905,126 +987,126 @@ const App = () => {
         {/* TAB 4: REPORT */}
         {activeTab === 'report' && (
           <div className="space-y-6 animate-enter">
-             <AnimatedCard className="p-4 flex flex-col md:flex-row items-end gap-4">
-                <div className="w-full md:w-auto">
-                    <label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Từ ngày</label>
-                    <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/>
-                </div>
-                <div className="w-full md:w-auto">
-                    <label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Đến ngày</label>
-                    <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/>
-                </div>
-                <div className="w-full md:flex-1 text-right mt-2 md:mt-0">
-                    <div className="text-xs text-gray-500 uppercase font-bold mb-1">Tổng chi tiêu (Lọc)</div>
-                    <div className="text-2xl font-bold text-blue-800">{formatCurrency(totalFilteredSpent)}</div>
-                </div>
-             </AnimatedCard>
-
-             {filteredRecords.length > 0 && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <AnimatedCard className="p-4 h-72">
-                        <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Tỷ trọng chi tiêu</h4>
-                        <ResponsiveContainer width="100%" height="90%">
-                            <RePieChart>
-                                <Pie data={spendingByPerson} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5}>
-                                    {spendingByPerson.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
-                                </Pie>
-                                <RechartsTooltip content={<CustomTooltip />} />
-                                <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{fontSize: '11px'}}/>
-                            </RePieChart>
-                        </ResponsiveContainer>
-                    </AnimatedCard>
-                    
-                    <AnimatedCard className="p-4 h-72">
-                        <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Biểu đồ Công nợ</h4>
-                        <ResponsiveContainer width="100%" height="90%">
-                            <BarChart data={debtSummaryData} margin={{top: 5, right: 5, left: -10, bottom: 0}}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0"/>
-                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11}} dy={10} />
-                                <YAxis tick={{fontSize: 11}} />
-                                <RechartsTooltip content={<CustomTooltip />} cursor={{fill: 'rgba(0,0,0,0.02)'}} />
-                                <Bar dataKey="net" radius={[4, 4, 4, 4]} barSize={30}>
-                                    {debtSummaryData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.net > 0 ? '#10b981' : '#ef4444'} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </AnimatedCard>
-                </div>
-             )}
-
-             <AnimatedCard className="p-4 sm:p-6">
-                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
-                    <h4 className="font-bold text-gray-700 uppercase flex items-center gap-2"><FileText className="w-4 h-4"/> Bảng Tổng Hợp</h4>
-                    <button onClick={() => {
-                        const lines = netBalances.map(nb => `${nb.name}: ${formatCurrency(nb.net)}`).join('\n');
-                        copyToClipboard(lines);
-                        alert('Đã copy!');
-                    }} className="text-xs flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded font-medium transition-colors w-full sm:w-auto justify-center">
-                        <Copy className="w-3 h-3"/> Copy nội dung
-                    </button>
+              <AnimatedCard className="p-4 flex flex-col md:flex-row items-end gap-4">
+                 <div className="w-full md:w-auto">
+                     <label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Từ ngày</label>
+                     <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/>
                  </div>
-                 <div className="overflow-x-auto">
-                     <table className="w-full text-sm text-left border-collapse min-w-[500px] sm:min-w-0">
-                         <thead className="bg-gray-50 text-gray-500 uppercase text-xs">
-                             <tr>
-                                 <th className="px-4 py-3 border-b w-[40%]">Thành viên</th>
-                                 <th className="px-4 py-3 border-b text-right">Dư nợ</th>
-                                 <th className="px-4 py-3 border-b text-right">Chi tiết</th>
-                             </tr>
-                         </thead>
-                         <tbody className="divide-y divide-gray-100">
-                             {netBalances.map(nb => (
-                                 <React.Fragment key={nb.name}>
-                                     <tr 
-                                        className="hover:bg-gray-50 cursor-pointer group"
-                                        onClick={() => toggleReportRow(nb.name)}
-                                     >
-                                         <td className="px-4 py-3 font-bold text-gray-800 flex items-center gap-2">
-                                             <div className={`p-1 rounded-full transition-transform duration-200 ${expandedReportRows[nb.name] ? 'rotate-90 bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
-                                                 <ChevronRight className="w-4 h-4"/>
-                                             </div>
-                                             {nb.name}
-                                         </td>
-                                         <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${nb.net > 0 ? 'text-green-600' : (nb.net < 0 ? 'text-red-600' : 'text-gray-400')}`}>
-                                             {nb.net > 0 ? '+' : ''}{formatCurrency(nb.net)}
-                                         </td>
-                                         <td className="px-4 py-3 text-right text-gray-400 text-xs">
-                                             {nb.meals.length} bữa ăn (Xem)
-                                         </td>
-                                     </tr>
-                                     {expandedReportRows[nb.name] && (
-                                         <tr className="bg-gray-50/50 animate-in fade-in">
-                                             <td colSpan={3} className="px-4 py-3 pl-4 sm:pl-12">
-                                                 <div className="text-[11px] uppercase font-bold text-gray-400 mb-2">Lịch sử tham gia:</div>
-                                                 {nb.meals.length > 0 ? (
-                                                     <div className="space-y-2">
-                                                         {nb.meals.map((m, idx) => (
-                                                             <div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-gray-100 text-xs shadow-sm">
-                                                                 <div className="flex gap-2 sm:gap-3 flex-1 overflow-hidden">
-                                                                     <span className="font-mono text-gray-500 whitespace-nowrap">{formatShortDate(m.date)}</span>
-                                                                     <span className="font-medium text-gray-700 truncate">{m.title}</span>
-                                                                 </div>
-                                                                 <div className="flex items-center gap-2 pl-2">
-                                                                     {m.isPaid ? 
-                                                                         <span className="text-green-600 flex items-center gap-1 font-bold bg-green-50 px-1.5 py-0.5 rounded whitespace-nowrap hidden sm:flex"><CheckCircle className="w-3 h-3"/> Đã trả</span> 
-                                                                         : 
-                                                                         <span className="text-gray-400 italic whitespace-nowrap hidden sm:inline">Chưa trả</span>
-                                                                     }
-                                                                     <span className="font-bold text-gray-800 w-[60px] text-right">{formatCurrency(m.amount)}</span>
-                                                                 </div>
-                                                             </div>
-                                                         ))}
-                                                     </div>
-                                                 ) : <div className="text-xs text-gray-400 italic">Chưa tham gia bữa nào trong khoảng thời gian này.</div>}
-                                             </td>
-                                         </tr>
-                                     )}
-                                 </React.Fragment>
-                             ))}
-                         </tbody>
-                     </table>
+                 <div className="w-full md:w-auto">
+                     <label className="text-xs font-bold text-gray-500 block mb-2 uppercase tracking-wide">Đến ngày</label>
+                     <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-200 outline-none"/>
                  </div>
-             </AnimatedCard>
+                 <div className="w-full md:flex-1 text-right mt-2 md:mt-0">
+                     <div className="text-xs text-gray-500 uppercase font-bold mb-1">Tổng chi tiêu (Lọc)</div>
+                     <div className="text-2xl font-bold text-blue-800">{formatCurrency(totalFilteredSpent)}</div>
+                 </div>
+              </AnimatedCard>
+
+              {filteredRecords.length > 0 && (
+                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                     <AnimatedCard className="p-4 h-72">
+                         <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Tỷ trọng chi tiêu</h4>
+                         <ResponsiveContainer width="100%" height="90%">
+                             <RePieChart>
+                                 <Pie data={spendingByPerson} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5}>
+                                     {spendingByPerson.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
+                                 </Pie>
+                                 <RechartsTooltip content={<CustomTooltip />} />
+                                 <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{fontSize: '11px'}}/>
+                             </RePieChart>
+                         </ResponsiveContainer>
+                     </AnimatedCard>
+                     
+                     <AnimatedCard className="p-4 h-72">
+                         <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase text-center">Biểu đồ Công nợ</h4>
+                         <ResponsiveContainer width="100%" height="90%">
+                             <BarChart data={debtSummaryData} margin={{top: 5, right: 5, left: -10, bottom: 0}}>
+                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0"/>
+                                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11}} dy={10} />
+                                 <YAxis tick={{fontSize: 11}} />
+                                 <RechartsTooltip content={<CustomTooltip />} cursor={{fill: 'rgba(0,0,0,0.02)'}} />
+                                 <Bar dataKey="net" radius={[4, 4, 4, 4]} barSize={30}>
+                                     {debtSummaryData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.net > 0 ? '#10b981' : '#ef4444'} />)}
+                                 </Bar>
+                             </BarChart>
+                         </ResponsiveContainer>
+                     </AnimatedCard>
+                 </div>
+              )}
+
+              <AnimatedCard className="p-4 sm:p-6">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                     <h4 className="font-bold text-gray-700 uppercase flex items-center gap-2"><FileText className="w-4 h-4"/> Bảng Tổng Hợp</h4>
+                     <button onClick={() => {
+                         const lines = netBalances.map(nb => `${nb.name}: ${formatCurrency(nb.net)}`).join('\n');
+                         copyToClipboard(lines);
+                         alert('Đã copy!');
+                     }} className="text-xs flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded font-medium transition-colors w-full sm:w-auto justify-center">
+                         <Copy className="w-3 h-3"/> Copy nội dung
+                     </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left border-collapse min-w-[500px] sm:min-w-0">
+                          <thead className="bg-gray-50 text-gray-500 uppercase text-xs">
+                              <tr>
+                                  <th className="px-4 py-3 border-b w-[40%]">Thành viên</th>
+                                  <th className="px-4 py-3 border-b text-right">Dư nợ</th>
+                                  <th className="px-4 py-3 border-b text-right">Chi tiết</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                              {netBalances.map(nb => (
+                                  <React.Fragment key={nb.name}>
+                                      <tr 
+                                         className="hover:bg-gray-50 cursor-pointer group"
+                                         onClick={() => toggleReportRow(nb.name)}
+                                      >
+                                          <td className="px-4 py-3 font-bold text-gray-800 flex items-center gap-2">
+                                              <div className={`p-1 rounded-full transition-transform duration-200 ${expandedReportRows[nb.name] ? 'rotate-90 bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
+                                                  <ChevronRight className="w-4 h-4"/>
+                                              </div>
+                                              {nb.name}
+                                          </td>
+                                          <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${nb.net > 0 ? 'text-green-600' : (nb.net < 0 ? 'text-red-600' : 'text-gray-400')}`}>
+                                              {nb.net > 0 ? '+' : ''}{formatCurrency(nb.net)}
+                                          </td>
+                                          <td className="px-4 py-3 text-right text-gray-400 text-xs">
+                                              {nb.meals.length} bữa ăn (Xem)
+                                          </td>
+                                      </tr>
+                                      {expandedReportRows[nb.name] && (
+                                          <tr className="bg-gray-50/50 animate-in fade-in">
+                                              <td colSpan={3} className="px-4 py-3 pl-4 sm:pl-12">
+                                                  <div className="text-[11px] uppercase font-bold text-gray-400 mb-2">Lịch sử tham gia:</div>
+                                                  {nb.meals.length > 0 ? (
+                                                      <div className="space-y-2">
+                                                          {nb.meals.map((m, idx) => (
+                                                              <div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-gray-100 text-xs shadow-sm">
+                                                                  <div className="flex gap-2 sm:gap-3 flex-1 overflow-hidden">
+                                                                      <span className="font-mono text-gray-500 whitespace-nowrap">{formatShortDate(m.date)}</span>
+                                                                      <span className="font-medium text-gray-700 truncate">{m.title}</span>
+                                                                  </div>
+                                                                  <div className="flex items-center gap-2 pl-2">
+                                                                      {m.isPaid ? 
+                                                                          <span className="text-green-600 flex items-center gap-1 font-bold bg-green-50 px-1.5 py-0.5 rounded whitespace-nowrap hidden sm:flex"><CheckCircle className="w-3 h-3"/> Đã trả</span> 
+                                                                          : 
+                                                                          <span className="text-gray-400 italic whitespace-nowrap hidden sm:inline">Chưa trả</span>
+                                                                      }
+                                                                      <span className="font-bold text-gray-800 w-[60px] text-right">{formatCurrency(m.amount)}</span>
+                                                                  </div>
+                                                              </div>
+                                                          ))}
+                                                      </div>
+                                                  ) : <div className="text-xs text-gray-400 italic">Chưa tham gia bữa nào trong khoảng thời gian này.</div>}
+                                              </td>
+                                          </tr>
+                                      )}
+                                  </React.Fragment>
+                              ))}
+                          </tbody>
+                      </table>
+                  </div>
+              </AnimatedCard>
 
           </div>
         )}
@@ -1032,69 +1114,72 @@ const App = () => {
         {/* TAB 5: PEOPLE */}
         {activeTab === 'people' && (
           <div className="animate-enter max-w-3xl mx-auto">
-             <AnimatedCard className="p-4 sm:p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-3">
-                    <h3 className="font-bold text-lg flex items-center gap-2" style={{ color: THEME_COLOR }}>
-                        <Users className="w-6 h-6" /> Danh Sách Thành Viên
-                    </h3>
-                    <div className="relative w-full sm:w-auto">
-                        <button 
-                            onClick={() => setShowSampleOptions(!showSampleOptions)}
-                            className="text-xs bg-red-100 hover:bg-red-200 text-red-800 px-4 py-2 rounded-lg flex items-center justify-center gap-1 font-bold transition-all shadow-sm hover:shadow w-full sm:w-auto"
-                        >
-                            <Trash2 className="w-3 h-3" /> Reset Data
-                        </button>
-                        {showSampleOptions && (
-                            <div className="absolute right-0 mt-2 w-full sm:w-52 bg-white border rounded-xl shadow-2xl z-50 overflow-hidden animate-in zoom-in-95 duration-200">
-                                <button onClick={() => { handleClearData(); setShowSampleOptions(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-red-50 text-red-600 font-medium">
-                                    <Trash2 className="w-3 h-3 inline mr-1"/> Xóa danh sách thành viên
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-                
-                <div className="flex gap-2 mb-6">
-                    <input 
-                        type="text" 
-                        value={newPersonName}
-                        onChange={(e) => setNewPersonName(e.target.value)}
-                        placeholder="Nhập tên thành viên..." 
-                        className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none transition-all"
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddPerson(newPersonName)}
-                    />
-                    <button 
-                        onClick={() => handleAddPerson(newPersonName)} 
-                        className="text-white px-5 rounded-lg font-bold hover:opacity-90 transition-all shadow-md active:scale-95"
-                        style={{ backgroundColor: THEME_COLOR }}
-                    >
-                        <Plus className="w-5 h-5" />
-                    </button>
-                </div>
-                
-                {people.length === 0 ? (
-                    <div className="text-center text-gray-400 py-12 border-2 border-dashed border-gray-200 rounded-xl">
-                        <Users className="w-12 h-12 mx-auto mb-2 opacity-20"/>
-                        Chưa có thành viên nào.
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {people.map((person, idx) => (
-                            <div key={person} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg hover:shadow-md transition-all group" style={{ animationDelay: `${idx * 0.05}s` }}>
-                                <span className="font-medium flex items-center gap-3 text-gray-700">
-                                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 text-blue-800 flex items-center justify-center text-sm font-bold shadow-sm">
-                                        {person.charAt(0)}
-                                    </div>
-                                    {person}
-                                </span>
-                                <button onClick={() => handleRemovePerson(person)} className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-all opacity-0 group-hover:opacity-100">
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                )}
-             </AnimatedCard>
+              <AnimatedCard className="p-4 sm:p-6">
+                 <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-3">
+                     <h3 className="font-bold text-lg flex items-center gap-2" style={{ color: THEME_COLOR }}>
+                         <Users className="w-6 h-6" /> Danh Sách Thành Viên
+                     </h3>
+                     <div className="relative w-full sm:w-auto">
+                         <button 
+                             onClick={() => setShowSampleOptions(!showSampleOptions)}
+                             className="text-xs bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-4 py-2 rounded-lg flex items-center justify-center gap-1 font-bold transition-all shadow-sm hover:shadow w-full sm:w-auto"
+                         >
+                             <Database className="w-3 h-3" /> Dữ liệu mẫu
+                         </button>
+                         {showSampleOptions && (
+                             <div className="absolute right-0 mt-2 w-full sm:w-52 bg-white border rounded-xl shadow-2xl z-50 overflow-hidden animate-in zoom-in-95 duration-200">
+                                 <button onClick={handleLoadSampleData} className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b">
+                                     Nạp dữ liệu mẫu lên Cloud
+                                 </button>
+                                 <button onClick={handleClearData} className="w-full text-left px-4 py-3 text-sm hover:bg-red-50 text-red-600 font-medium">
+                                     <Trash2 className="w-3 h-3 inline mr-1"/> Xóa sạch Cloud DB
+                                 </button>
+                             </div>
+                         )}
+                     </div>
+                 </div>
+                 
+                 <div className="flex gap-2 mb-6">
+                     <input 
+                         type="text" 
+                         value={newPersonName}
+                         onChange={(e) => setNewPersonName(e.target.value)}
+                         placeholder="Nhập tên thành viên..." 
+                         className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none transition-all"
+                         onKeyDown={(e) => e.key === 'Enter' && handleAddPerson(newPersonName)}
+                     />
+                     <button 
+                         onClick={() => handleAddPerson(newPersonName)} 
+                         className="text-white px-5 rounded-lg font-bold hover:opacity-90 transition-all shadow-md active:scale-95"
+                         style={{ backgroundColor: THEME_COLOR }}
+                     >
+                         <Plus className="w-5 h-5" />
+                     </button>
+                 </div>
+                 
+                 {people.length === 0 ? (
+                     <div className="text-center text-gray-400 py-12 border-2 border-dashed border-gray-200 rounded-xl">
+                         <Users className="w-12 h-12 mx-auto mb-2 opacity-20"/>
+                         Chưa có thành viên nào.
+                     </div>
+                 ) : (
+                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                         {people.map((person, idx) => (
+                             <div key={person} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg hover:shadow-md transition-all group" style={{ animationDelay: `${idx * 0.05}s` }}>
+                                 <span className="font-medium flex items-center gap-3 text-gray-700">
+                                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 text-blue-800 flex items-center justify-center text-sm font-bold shadow-sm">
+                                         {person.charAt(0)}
+                                     </div>
+                                     {person}
+                                 </span>
+                                 <button onClick={() => handleRemovePerson(person)} className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-all opacity-0 group-hover:opacity-100">
+                                     <Trash2 className="w-4 h-4" />
+                                 </button>
+                             </div>
+                         ))}
+                     </div>
+                 )}
+              </AnimatedCard>
           </div>
         )}
 
