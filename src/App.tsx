@@ -631,9 +631,9 @@ const App = () => {
           newState.records = current.records.map(r => ({
             ...r,
             participants: r.participants.map(p => {
-              if (p.name === action.payload.personName && !p.paid && r.payer !== p.name) {
-                return { ...p, paid: true, paidAt: new Date().toISOString() : null };
-              }
+            if (p.name === action.payload.personName && !p.paid && r.payer !== p.name) {
+                return { ...p, paid: true, paidAt: new Date().toISOString() }; // <-- Xóa đoạn ": null" đi
+                }
               return p;
             })
           }));
