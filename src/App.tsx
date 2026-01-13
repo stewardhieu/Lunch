@@ -4,7 +4,7 @@ import {
   ChevronDown, Copy, UtensilsCrossed, 
   PieChart, RotateCcw, RotateCw, Filter, Edit3, Database, X, 
   History, ArrowRight, BookOpen, LogIn, LogOut, User, Key, Lock, 
-  LayoutList // <--- Đã thêm LayoutList và dấu phẩy đầy đủ
+  LayoutList, ScrollText, Clock // <--- Đã thêm ScrollText, Clock
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie
@@ -45,9 +45,19 @@ interface MealRecord {
   participants: ParticipantStatus[];
 }
 
+// [NEW] Log Entry Type
+interface LogEntry {
+  id: string;
+  timestamp: number;
+  userEmail: string;
+  actionType: 'add' | 'edit' | 'delete' | 'update_status' | 'system';
+  details: string;
+}
+
 interface AppState {
   people: string[];
   records: MealRecord[];
+  logs: LogEntry[]; // [NEW] Added logs array
 }
 
 // --- Actions ---
@@ -80,7 +90,7 @@ const formatShortDate = (dateString: string) => {
   return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit' }).format(date);
 };
 
-const formatDateTime = (isoString?: string | null) => {
+const formatDateTime = (isoString?: string | null | number) => {
   if (!isoString) return '';
   const date = new Date(isoString);
   return new Intl.DateTimeFormat('vi-VN', { 
@@ -204,6 +214,10 @@ const GuideModal = ({ onClose }: { onClose: () => void }) => (
                         <li><b>Khách (Chưa đăng nhập):</b> Chỉ có thể xem dữ liệu, không thể sửa đổi.</li>
                         <li><b>Thành viên (Đã đăng nhập):</b> Có toàn quyền thêm, sửa, xóa dữ liệu.</li>
                     </ul>
+                </section>
+                <section>
+                    <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-lg">5. Lịch sử chỉnh sửa</h4>
+                    <p className="mb-2 text-sm">Vào tab <b>Lịch Sử</b> để xem chi tiết ai đã thay đổi gì vào thời gian nào, giúp minh bạch tài chính.</p>
                 </section>
             </div>
             <div className="p-4 border-t bg-gray-50 text-right sticky bottom-0">
@@ -515,12 +529,12 @@ const App = () => {
   // --- History & State ---
   const [history, setHistory] = useState<AppState[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const currentState = history[historyIndex] || { people: [], records: [] };
-  const { people, records } = currentState;
+  const currentState = history[historyIndex] || { people: [], records: [], logs: [] };
+  const { people, records, logs } = currentState;
   const isRemoteUpdate = useRef(false);
 
   // --- UI State ---
-  const [activeTab, setActiveTab] = useState<'entry' | 'debt_history' | 'report' | 'people'>('entry');
+  const [activeTab, setActiveTab] = useState<'entry' | 'debt_history' | 'report' | 'people' | 'logs'>('entry');
   const [showGuide, setShowGuide] = useState(false);
   
   // --- AUTH STATE ---
@@ -555,6 +569,9 @@ const App = () => {
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data() as AppState;
+        // Migration check: if logs doesn't exist, add it
+        if (!data.logs) data.logs = [];
+        
         if (JSON.stringify(data) !== JSON.stringify(currentState)) {
             isRemoteUpdate.current = true;
             setHistory([data]);
@@ -566,12 +583,13 @@ const App = () => {
         if (savedPeople || savedRecords) {
             const initialState: AppState = {
                 people: savedPeople ? JSON.parse(savedPeople) : [],
-                records: savedRecords ? JSON.parse(savedRecords) : []
+                records: savedRecords ? JSON.parse(savedRecords) : [],
+                logs: []
             };
             setHistory([initialState]);
             setHistoryIndex(0);
         } else {
-            setHistory([{ people: [], records: [] }]);
+            setHistory([{ people: [], records: [], logs: [] }]);
             setHistoryIndex(0);
         }
       }
@@ -589,7 +607,7 @@ const App = () => {
       // Chỉ lưu lên cloud nếu người dùng đã đăng nhập và không phải là update từ cloud
       if (!isRemoteUpdate.current && currentUser) {
           const docRef = doc(db, 'lunch_app', 'main_data');
-          setDoc(docRef, { people: current.people, records: current.records })
+          setDoc(docRef, { people: current.people, records: current.records, logs: current.logs })
             .catch(err => console.error("Lỗi lưu Firebase:", err));
       } else {
           isRemoteUpdate.current = false;
@@ -597,7 +615,7 @@ const App = () => {
     }
   }, [history, historyIndex, currentUser]);
 
-  // --- Dispatcher ---
+  // --- Dispatcher with Logging ---
   const dispatch = useCallback((action: Action) => {
     // PROTECT ACTIONS: Nếu chưa đăng nhập, không cho sửa
     if (!currentUser && action.type !== 'SET_STATE' && action.type !== 'LOAD_SAMPLE_DATA' && action.type !== 'CLEAR_DATA') {
@@ -608,14 +626,42 @@ const App = () => {
     setHistory(prevHistory => {
       const current = prevHistory[historyIndex];
       let newState: AppState = { ...current };
+      // Ensure logs array exists
+      if (!newState.logs) newState.logs = [];
+
+      const userEmail = currentUser?.email || 'Unknown';
+      let logDetail = '';
+      let actionType: LogEntry['actionType'] = 'edit';
 
       switch (action.type) {
-        case 'ADD_PERSON': newState.people = [...current.people, action.payload]; break;
-        case 'REMOVE_PERSON': newState.people = current.people.filter(p => p !== action.payload); break;
-        case 'ADD_RECORD': newState.records = [action.payload, ...current.records]; break;
-        case 'UPDATE_RECORD': newState.records = current.records.map(r => r.id === action.payload.id ? action.payload : r); break;
-        case 'DELETE_RECORD': newState.records = current.records.filter(r => r.id !== action.payload); break;
+        case 'ADD_PERSON': 
+            newState.people = [...current.people, action.payload]; 
+            actionType = 'add';
+            logDetail = `Thêm thành viên: ${action.payload}`;
+            break;
+        case 'REMOVE_PERSON': 
+            newState.people = current.people.filter(p => p !== action.payload); 
+            actionType = 'delete';
+            logDetail = `Xóa thành viên: ${action.payload}`;
+            break;
+        case 'ADD_RECORD': 
+            newState.records = [action.payload, ...current.records]; 
+            actionType = 'add';
+            logDetail = `Thêm chi tiêu: ${action.payload.title} (${formatCurrency(action.payload.totalAmount)})`;
+            break;
+        case 'UPDATE_RECORD': 
+            newState.records = current.records.map(r => r.id === action.payload.id ? action.payload : r); 
+            actionType = 'edit';
+            logDetail = `Sửa chi tiêu: ${action.payload.title}`;
+            break;
+        case 'DELETE_RECORD': 
+            const recordToDelete = current.records.find(r => r.id === action.payload);
+            newState.records = current.records.filter(r => r.id !== action.payload); 
+            actionType = 'delete';
+            logDetail = `Xóa chi tiêu: ${recordToDelete ? recordToDelete.title : 'Không xác định'}`;
+            break;
         case 'TOGGLE_PAID':
+          const recordToToggle = current.records.find(r => r.id === action.payload.recordId);
           newState.records = current.records.map(r => {
             if (r.id !== action.payload.recordId) return r;
             return {
@@ -627,19 +673,24 @@ const App = () => {
               })
             };
           });
+          actionType = 'update_status';
+          logDetail = `Cập nhật thanh toán: ${action.payload.personName} cho khoản ${recordToToggle?.title}`;
           break;
         case 'MARK_ALL_PAID':
           newState.records = current.records.map(r => ({
             ...r,
             participants: r.participants.map(p => {
-            if (p.name === action.payload.personName && !p.paid && r.payer !== p.name) {
-                return { ...p, paid: true, paidAt: new Date().toISOString() }; // <-- Xóa đoạn ": null" đi
-                }
+              if (p.name === action.payload.personName && !p.paid && r.payer !== p.name) {
+                return { ...p, paid: true, paidAt: new Date().toISOString() };
+              }
               return p;
             })
           }));
+          actionType = 'update_status';
+          logDetail = `Trả hết nợ cho: ${action.payload.personName}`;
           break;
         case 'LOAD_SAMPLE_DATA':
+          // ... logic cũ
           newState.people = ["Khánh", "Minh Anh", "Hiếu", "Chị Trang"];
           if (action.payload === 'full') {
             const now = new Date();
@@ -660,13 +711,35 @@ const App = () => {
                         { name: "Chị Trang", paid: false }
                     ]
                 },
-                // ... (Giữ nguyên mẫu cũ nếu cần)
+                // ...
             ];
           }
+          actionType = 'system';
+          logDetail = 'Nạp dữ liệu mẫu';
           break;
-        case 'CLEAR_DATA': newState = { people: [], records: [] }; break;
-        case 'SET_STATE': newState = action.payload; break;
+        case 'CLEAR_DATA': 
+            newState = { people: [], records: [], logs: [] }; 
+            actionType = 'system';
+            logDetail = 'Xóa toàn bộ dữ liệu';
+            break;
+        case 'SET_STATE': 
+            newState = action.payload; 
+            // Không log khi sync từ cloud
+            logDetail = ''; 
+            break;
         default: return prevHistory;
+      }
+
+      // Add Log if details exist
+      if (logDetail && action.type !== 'SET_STATE') {
+          const newLog: LogEntry = {
+              id: generateId(),
+              timestamp: Date.now(),
+              userEmail: userEmail,
+              actionType: actionType,
+              details: logDetail
+          };
+          newState.logs = [newLog, ...newState.logs];
       }
 
       const newHistory = prevHistory.slice(0, historyIndex + 1);
@@ -780,6 +853,17 @@ const App = () => {
   const sortedHistoryDates = Object.keys(historyByDate).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
+  // Helper for Log Icon
+  const getLogIcon = (type: LogEntry['actionType']) => {
+      switch(type) {
+          case 'add': return <Plus className="w-4 h-4 text-green-600"/>;
+          case 'delete': return <Trash2 className="w-4 h-4 text-red-600"/>;
+          case 'edit': return <Edit3 className="w-4 h-4 text-blue-600"/>;
+          case 'update_status': return <CheckCircle className="w-4 h-4 text-purple-600"/>;
+          default: return <Database className="w-4 h-4 text-gray-600"/>;
+      }
+  }
+
   return (
     <div className="min-h-screen font-sans flex flex-col text-gray-800 bg-gray-50">
       <style>{`
@@ -860,11 +944,12 @@ const App = () => {
              { id: 'debt_history', icon: LayoutList, label: 'Theo Dõi' },
              { id: 'report', icon: PieChart, label: 'Báo Cáo' },
              { id: 'people', icon: Users, label: 'Thành Viên' },
+             { id: 'logs', icon: ScrollText, label: 'Lịch Sử' }, // New Tab
            ].map(tab => (
              <button
                key={tab.id}
                onClick={() => setActiveTab(tab.id as any)}
-               className={`flex-1 min-w-[25%] sm:min-w-[auto] flex flex-col items-center justify-center py-3 px-1 text-xs font-semibold transition-all border-b-4 duration-300 snap-start
+               className={`flex-1 min-w-[20%] sm:min-w-[auto] flex flex-col items-center justify-center py-3 px-1 text-xs font-semibold transition-all border-b-4 duration-300 snap-start
                  ${activeTab === tab.id 
                    ? `border-[${THEME_COLOR}] text-[${THEME_COLOR}] bg-blue-50/60` 
                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
@@ -1130,7 +1215,7 @@ const App = () => {
           </div>
         )}
 
-        {/* TAB 4: REPORT (Không đổi logic hiển thị, chỉ copy lại để code đầy đủ) */}
+        {/* TAB 4: REPORT */}
         {activeTab === 'report' && (
           <div className="space-y-6 animate-enter">
              <AnimatedCard className="p-4 flex flex-col md:flex-row items-end gap-4">
@@ -1191,7 +1276,6 @@ const App = () => {
                         <Copy className="w-3 h-3"/> Copy nội dung
                     </button>
                  </div>
-                 {/* Bảng tổng hợp code y hệt cũ, giữ nguyên */}
                  <div className="overflow-x-auto">
                      <table className="w-full text-sm text-left border-collapse min-w-[500px] sm:min-w-0">
                          <thead className="bg-gray-50 text-gray-500 uppercase text-xs">
@@ -1330,6 +1414,38 @@ const App = () => {
                 )}
              </AnimatedCard>
           </div>
+        )}
+
+        {/* TAB 6: LOGS (New Feature) */}
+        {activeTab === 'logs' && (
+            <div className="animate-enter max-w-3xl mx-auto">
+                <AnimatedCard className="p-4 sm:p-6">
+                    <h3 className="font-bold text-lg mb-6 border-b pb-4 flex items-center gap-2" style={{ color: THEME_COLOR }}>
+                        <ScrollText className="w-6 h-6" /> Lịch Sử Chỉnh Sửa
+                    </h3>
+                    
+                    {(!logs || logs.length === 0) ? (
+                        <div className="text-center py-12 text-gray-400 italic">Chưa có lịch sử thay đổi nào.</div>
+                    ) : (
+                        <div className="space-y-4">
+                            {logs.map((log) => (
+                                <div key={log.id} className="flex items-start gap-3 p-3 border rounded-lg bg-gray-50 hover:bg-white hover:shadow-sm transition-all">
+                                    <div className="mt-1 p-2 bg-white rounded-full border shadow-sm">
+                                        {getLogIcon(log.actionType)}
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="text-sm font-medium text-gray-800">{log.details}</div>
+                                        <div className="text-xs text-gray-500 mt-1 flex items-center gap-3">
+                                            <span className="flex items-center gap-1"><User className="w-3 h-3"/> {log.userEmail.split('@')[0]}</span>
+                                            <span className="flex items-center gap-1"><Clock className="w-3 h-3"/> {formatDateTime(log.timestamp)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </AnimatedCard>
+            </div>
         )}
 
       </main>
