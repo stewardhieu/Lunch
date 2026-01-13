@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  Plus, Trash2, Users, Calendar, CheckCircle, XCircle, 
+  Plus, Trash2, Users, User, Calendar, CheckCircle, XCircle, AlertCircle, // Đã thêm User và AlertCircle vào đây
   ChevronDown, Copy, UtensilsCrossed, 
   PieChart, RotateCcw, RotateCw, Filter, Edit3, Database, X, 
   History, ArrowRight, BookOpen, LogIn, LogOut, Key, Lock, 
-  LayoutList, ScrollText, Clock, Bell // Added Bell for notifications
+  LayoutList, ScrollText, Clock, Bell 
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell, PieChart as RePieChart, Pie
