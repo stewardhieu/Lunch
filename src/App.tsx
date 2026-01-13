@@ -208,9 +208,9 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (user: User) => void 
                         {loading ? (
                           <Loader2 className="w-5 h-5 animate-spin" />
                         ) : (
-                          <React.Fragment>
-                            <Lock className="w-4 h-4" /> ĐĂNG NHẬP
-                          </React.Fragment>
+                          <span className="flex items-center gap-2">
+                             <Lock className="w-4 h-4" /> ĐĂNG NHẬP
+                          </span>
                         )}
                     </button>
                 </form>
