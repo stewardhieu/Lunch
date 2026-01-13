@@ -19,7 +19,8 @@
     <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
     
     <!-- Lucide React (Icons) -->
-    <script src="https://unpkg.com/lucide-react@0.292.0/dist/umd/lucide-react.min.js"></script>
+    <!-- Updated to latest version to fix forwardRef issues -->
+    <script src="https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.min.js"></script>
 
     <style>
         body {
@@ -146,7 +147,8 @@
                 document.body.appendChild(textArea);
                 textArea.focus();
                 textArea.select();
-                return new Promise<void>((resolve, reject) => {
+                // Removed generic <void> here to prevent Babel syntax error
+                return new Promise((resolve, reject) => {
                     try {
                         const successful = document.execCommand('copy');
                         document.body.removeChild(textArea);
@@ -250,7 +252,8 @@
 
             useEffect(() => {
                 function handleClickOutside(event: MouseEvent) {
-                if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                // Fixed: Remove "as Node" type assertion for Babel Standalone compatibility
+                if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
                     setFDropdownOpen(false);
                 }
                 }
@@ -1222,4 +1225,4 @@
         root.render(<App />);
     </script>
 </body>
-</html>
+</html>"
